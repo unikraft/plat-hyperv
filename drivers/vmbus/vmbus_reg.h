@@ -288,10 +288,10 @@ struct vmbus_chanmsg_chrequest {
 	struct vmbus_chanmsg_hdr chm_hdr;
 } __packed;
 
-// /* VMBUS_CHANMSG_TYPE_DISCONNECT */
-// struct vmbus_chanmsg_disconnect {
-// 	struct vmbus_chanmsg_hdr chm_hdr;
-// } __packed;
+/* VMBUS_CHANMSG_TYPE_DISCONNECT */
+struct vmbus_chanmsg_disconnect {
+	struct vmbus_chanmsg_hdr chm_hdr;
+} __packed;
 
 // /* VMBUS_CHANMSG_TYPE_TL_CONN */
 // /* Hyper-V socket guest connect request */
@@ -302,61 +302,64 @@ struct vmbus_chanmsg_chrequest {
 // } __packed;
 
 
-// /* VMBUS_CHANMSG_TYPE_CHOPEN */
-// struct vmbus_chanmsg_chopen {
-// 	struct vmbus_chanmsg_hdr chm_hdr;
-// 	uint32_t	chm_chanid;
-// 	uint32_t	chm_openid;
-// 	uint32_t	chm_gpadl;
-// 	uint32_t	chm_vcpuid;
-// 	uint32_t	chm_txbr_pgcnt;
-// #define VMBUS_CHANMSG_CHOPEN_UDATA_SIZE	120
-// 	uint8_t		chm_udata[VMBUS_CHANMSG_CHOPEN_UDATA_SIZE];
-// } __packed;
+/* VMBUS_CHANMSG_TYPE_CHOPEN */
+struct vmbus_chanmsg_chopen {
+	struct vmbus_chanmsg_hdr chm_hdr;
+	uint32_t	chm_chanid;
+	uint32_t	chm_openid;
+	uint32_t	chm_gpadl;
+	uint32_t	chm_vcpuid;
+	uint32_t	chm_txbr_pgcnt;
+#define VMBUS_CHANMSG_CHOPEN_UDATA_SIZE	120
+	uint8_t		chm_udata[VMBUS_CHANMSG_CHOPEN_UDATA_SIZE];
+} __packed;
 
-// /* VMBUS_CHANMSG_TYPE_CHOPEN_RESP */
-// struct vmbus_chanmsg_chopen_resp {
-// 	struct vmbus_chanmsg_hdr chm_hdr;
-// 	uint32_t	chm_chanid;
-// 	uint32_t	chm_openid;
-// 	uint32_t	chm_status;
-// } __packed;
+/* VMBUS_CHANMSG_TYPE_CHOPEN_RESP */
+struct vmbus_chanmsg_chopen_resp {
+	struct vmbus_chanmsg_hdr chm_hdr;
+	uint32_t	chm_chanid;
+	uint32_t	chm_openid;
+	uint32_t	chm_status;
+} __packed;
 
-// /* VMBUS_CHANMSG_TYPE_GPADL_CONN */
-// struct vmbus_chanmsg_gpadl_conn {
-// 	struct vmbus_chanmsg_hdr chm_hdr;
-// 	uint32_t	chm_chanid;
-// 	uint32_t	chm_gpadl;
-// 	uint16_t	chm_range_len;
-// 	uint16_t	chm_range_cnt;
-// 	struct vmbus_gpa_range chm_range;
-// } __packed;
+/* VMBUS_CHANMSG_TYPE_GPADL_CONN */
+struct vmbus_chanmsg_gpadl_conn {
+	struct vmbus_chanmsg_hdr chm_hdr;
+	uint32_t	chm_chanid;
+	uint32_t	chm_gpadl;
+	uint16_t	chm_range_len;
+	uint16_t	chm_range_cnt;
+	struct vmbus_gpa_range chm_range;
+} __packed;
 
-// #define VMBUS_CHANMSG_GPADL_CONN_PGMAX		26
+#define VMBUS_CHANMSG_GPADL_CONN_PGMAX		26
 // UK_CTASSERT(__offsetof(struct vmbus_chanmsg_gpadl_conn,
 //     chm_range.gpa_page[VMBUS_CHANMSG_GPADL_CONN_PGMAX]) <=
 //     HYPERCALL_POSTMSGIN_DSIZE_MAX);
+UK_CTASSERT(__offsetof(struct vmbus_chanmsg_gpadl_conn,
+    chm_range.page[VMBUS_CHANMSG_GPADL_CONN_PGMAX]) <=
+    HYPERCALL_POSTMSGIN_DSIZE_MAX);
 
-// /* VMBUS_CHANMSG_TYPE_GPADL_SUBCONN */
-// struct vmbus_chanmsg_gpadl_subconn {
-// 	struct vmbus_chanmsg_hdr chm_hdr;
-// 	uint32_t	chm_msgno;
-// 	uint32_t	chm_gpadl;
-// 	uint64_t	chm_gpa_page[];
-// } __packed;
+/* VMBUS_CHANMSG_TYPE_GPADL_SUBCONN */
+struct vmbus_chanmsg_gpadl_subconn {
+	struct vmbus_chanmsg_hdr chm_hdr;
+	uint32_t	chm_msgno;
+	uint32_t	chm_gpadl;
+	uint64_t	chm_gpa_page[];
+} __packed;
 
-// #define VMBUS_CHANMSG_GPADL_SUBCONN_PGMAX	28
-// UK_CTASSERT(__offsetof(struct vmbus_chanmsg_gpadl_subconn,
-//     chm_gpa_page[VMBUS_CHANMSG_GPADL_SUBCONN_PGMAX]) <=
-//     HYPERCALL_POSTMSGIN_DSIZE_MAX);
+#define VMBUS_CHANMSG_GPADL_SUBCONN_PGMAX	28
+UK_CTASSERT(__offsetof(struct vmbus_chanmsg_gpadl_subconn,
+    chm_gpa_page[VMBUS_CHANMSG_GPADL_SUBCONN_PGMAX]) <=
+    HYPERCALL_POSTMSGIN_DSIZE_MAX);
 
-// /* VMBUS_CHANMSG_TYPE_GPADL_CONNRESP */
-// struct vmbus_chanmsg_gpadl_connresp {
-// 	struct vmbus_chanmsg_hdr chm_hdr;
-// 	uint32_t	chm_chanid;
-// 	uint32_t	chm_gpadl;
-// 	uint32_t	chm_status;
-// } __packed;
+/* VMBUS_CHANMSG_TYPE_GPADL_CONNRESP */
+struct vmbus_chanmsg_gpadl_connresp {
+	struct vmbus_chanmsg_hdr chm_hdr;
+	uint32_t	chm_chanid;
+	uint32_t	chm_gpadl;
+	uint32_t	chm_status;
+} __packed;
 
 // /* VMBUS_CHANMSG_TYPE_CHCLOSE */
 // struct vmbus_chanmsg_chclose {

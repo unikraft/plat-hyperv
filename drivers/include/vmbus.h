@@ -112,25 +112,25 @@ struct vmbus_chanpkt_hdr {
 	 VMBUS_CHANPKT_GETLEN((pkt)->cph_hlen))
 #endif
 
-// struct vmbus_rxbuf_desc {
-// 	uint32_t	rb_len;
-// 	uint32_t	rb_ofs;
-// } __packed;
+struct vmbus_rxbuf_desc {
+	uint32_t	rb_len;
+	uint32_t	rb_ofs;
+} __packed;
 
-// struct vmbus_chanpkt_rxbuf {
-// 	struct vmbus_chanpkt_hdr cp_hdr;
-// 	uint16_t	cp_rxbuf_id;
-// 	uint16_t	cp_rsvd;
-// 	uint32_t	cp_rxbuf_cnt;
-// 	struct vmbus_rxbuf_desc cp_rxbuf[];
-// } __packed;
+struct vmbus_chanpkt_rxbuf {
+	struct vmbus_chanpkt_hdr cp_hdr;
+	uint16_t	cp_rxbuf_id;
+	uint16_t	cp_rsvd;
+	uint32_t	cp_rxbuf_cnt;
+	struct vmbus_rxbuf_desc cp_rxbuf[];
+} __packed;
 
-// struct vmbus_chan_br {
-// 	void		*cbr;
-// 	bus_addr_t	cbr_paddr;
-// 	int		cbr_txsz;
-// 	int		cbr_rxsz;
-// };
+struct vmbus_chan_br {
+	void		*cbr;
+	bus_addr_t	cbr_paddr;
+	int		cbr_txsz;
+	int		cbr_rxsz;
+};
 
 struct vmbus_channel;
 struct vmbus_xact;
@@ -205,8 +205,8 @@ vmbus_get_channel(device_t dev)
 void vmbus_chan_signal_tx(struct vmbus_channel *chan);
 void vmbus_chan_signal_rx(struct vmbus_channel *chan);
 
-// int		vmbus_chan_gpadl_connect(struct vmbus_channel *chan,
-// 		    bus_addr_t paddr, int size, uint32_t *gpadl);
+int		vmbus_chan_gpadl_connect(struct vmbus_channel *chan,
+		    bus_addr_t paddr, int size, uint32_t *gpadl);
 // int		vmbus_chan_gpadl_disconnect(struct vmbus_channel *chan,
 // 		    uint32_t gpadl);
 
@@ -221,8 +221,8 @@ void		vmbus_chan_cpu_set(struct vmbus_channel *chan, int cpu);
 // 		    int subchan_cnt);
 // void		vmbus_subchan_drain(struct vmbus_channel *pri_chan);
 
-// int		vmbus_chan_recv(struct vmbus_channel *chan, void *data, int *dlen,
-// 		    uint64_t *xactid);
+int		vmbus_chan_recv(struct vmbus_channel *chan, void *data, int *dlen,
+		    uint64_t *xactid);
 // int		vmbus_chan_recv_pkt(struct vmbus_channel *chan,
 // 		    struct vmbus_chanpkt_hdr *pkt, int *pktlen);
 
@@ -260,7 +260,7 @@ int		vmbus_chan_send_sglist(struct vmbus_channel *chan,
 // uint32_t	vmbus_chan_id(const struct vmbus_channel *chan);
 // uint32_t	vmbus_chan_subidx(const struct vmbus_channel *chan);
 // bool		vmbus_chan_is_primary(const struct vmbus_channel *chan);
-// bool		vmbus_chan_is_revoked(const struct vmbus_channel *chan);
+bool		vmbus_chan_is_revoked(const struct vmbus_channel *chan);
 // bool		vmbus_chan_is_hvs(const struct vmbus_channel *chan);
 // bool		vmbus_chan_is_hvs_conn_from_host(
 // 		    const struct vmbus_channel *chan);
@@ -273,7 +273,7 @@ int		vmbus_chan_send_sglist(struct vmbus_channel *chan,
 // 		vmbus_chan_guid_inst(struct vmbus_channel *chan);
 // int		vmbus_chan_prplist_nelem(int br_size, int prpcnt_max,
 // 		    int dlen_max);
-// bool		vmbus_chan_rx_empty(const struct vmbus_channel *chan);
+bool		vmbus_chan_rx_empty(const struct vmbus_channel *chan);
 // bool		vmbus_chan_tx_empty(const struct vmbus_channel *chan);
 // struct taskqueue *
 // 		vmbus_chan_mgmt_tq(const struct vmbus_channel *chan);

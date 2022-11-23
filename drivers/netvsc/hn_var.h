@@ -15,7 +15,7 @@
 #include <uk/netbuf.h>
 #include <uk/netdev.h>
 #include <uk/sglist.h>
-#include <uk/plat/spinlock.h>
+#include <uk/spinlock.h>
 
 #include <vmbus/vmbus_chanvar.h>
 
@@ -45,6 +45,15 @@
 //#define PAGE_MASK (rte_mem_page_size() - 1)
 #define PAGE_MASK __PAGE_MASK
 #endif
+
+/* START UK defines */
+typedef uint64_t rte_iova_t;
+#define RTE_BAD_IOVA 0
+
+#define RNDIS_DELAY_MS 10
+#define rte_delay_ms(ms)
+#define rte_delay_us(us)
+/* END */
 
 struct hn_data;
 struct hn_txdesc;
@@ -78,8 +87,7 @@ struct uk_netdev_tx_queue {
 	struct uk_allocpool *txdesc_pool;
 	// const struct rte_memzone *tx_rndis_mz;
 	void		*tx_rndis;
-	//rte_iova_t	tx_rndis_iova;
-	uint64_t tx_rndis_iova;
+	rte_iova_t	tx_rndis_iova;
 
 	/* Applied packet transmission aggregation limits. */
 	uint32_t	agg_szmax;
@@ -106,13 +114,13 @@ struct uk_netdev_rx_queue {
 	/* The flag to interrupt on the transmit queue */
 	uint8_t intr_enabled;
 
-	//struct hn_data  *hv;
+	struct hn_data  *hv;
 	struct vmbus_channel *chan;
 	// struct rte_mempool *mb_pool;
-	struct rte_ring *rx_ring;
+	// struct rte_ring *rx_ring;
 
 	// rte_spinlock_t ring_lock;
-	__spinlock ring_lock;
+	uk_spinlock ring_lock;
 	uint32_t event_sz;
 	uint16_t port_id;
 	uint16_t queue_id;
@@ -127,20 +135,21 @@ struct uk_netdev_rx_queue {
 /* multi-packet data from host */
 struct hn_rx_bufinfo {
 	struct vmbus_channel *chan;
-	struct hn_rx_queue *rxq;
+	// struct hn_rx_queue *rxq;
+	struct uk_netdev_rx_queue *rxq;
 	uint64_t	xactid;
 // 	struct rte_mbuf_ext_shared_info shinfo;
 } __rte_cache_aligned;
 
 #define HN_INVALID_PORT	UINT16_MAX
 
-enum vf_device_state {
-	vf_unknown = 0,
-	vf_removed,
-	vf_configured,
-	vf_started,
-	vf_stopped,
-};
+// enum vf_device_state {
+// 	vf_unknown = 0,
+// 	vf_removed,
+// 	vf_configured,
+// 	vf_started,
+// 	vf_stopped,
+// };
 
 // struct hn_vf_ctx {
 // 	uint16_t	vf_port;
@@ -164,10 +173,85 @@ enum vf_device_state {
 // 	int eal_hot_plug_retry;
 // };
 
+/* From DPDK/lib/net/rte_ether.h */
+/**
+ * Macro to print six-bytes of MAC address in hex format
+ */
+#define RTE_ETHER_ADDR_PRT_FMT     "%02X:%02X:%02X:%02X:%02X:%02X"
+
+/* From DPDK/lib/eal/include/rte_dev.h */
+/**
+ * A generic memory resource representation.
+ */
+struct rte_mem_resource {
+	uint64_t phys_addr; /**< Physical address, 0 if not resource. */
+	uint64_t len;       /**< Length of the resource. */
+	void *addr;         /**< Virtual address, NULL when not mapped. */
+};
+
+/* From DPDK/lib/eal/include/generic/rte_atomic.h */
+/**
+ * The atomic counter structure.
+ */
+typedef struct {
+	volatile int32_t cnt; /**< An internal counter value. */
+} rte_atomic32_t;
+
+/*------------------------- 32 bit atomic operations -------------------------*/
+
+/**
+ * Atomic compare and set.
+ *
+ * (atomic) equivalent to:
+ *   if (*dst == exp)
+ *     *dst = src (all 32-bit words)
+ *
+ * @param dst
+ *   The destination location into which the value will be written.
+ * @param exp
+ *   The expected value.
+ * @param src
+ *   The new value.
+ * @return
+ *   Non-zero on success; 0 on failure.
+ */
+static inline int
+rte_atomic32_cmpset(volatile uint32_t *dst, uint32_t exp, uint32_t src);
+
+// #ifdef RTE_FORCE_INTRINSICS
+static inline int
+rte_atomic32_cmpset(volatile uint32_t *dst, uint32_t exp, uint32_t src)
+{
+	return __sync_bool_compare_and_swap(dst, exp, src);
+}
+// #endif
+
+/**
+ * Atomically add a 32-bit value to a counter and return the result.
+ *
+ * Atomically adds the 32-bits value (inc) to the atomic counter (v) and
+ * returns the value of v after addition.
+ *
+ * @param v
+ *   A pointer to the atomic counter.
+ * @param inc
+ *   The value to be added to the counter.
+ * @return
+ *   The value of v after the addition.
+ */
+static inline int32_t
+rte_atomic32_add_return(rte_atomic32_t *v, int32_t inc)
+{
+	return __sync_add_and_fetch(&v->cnt, inc);
+}
+
 struct hn_data {
+	struct uk_alloc *a;
+
 	// struct rte_vmbus_device *vmbus;
 	struct vmbus_device *vmbus;
-	struct hn_rx_queue *primary;
+	// struct hn_rx_queue *primary;
+	struct uk_netdev_rx_queue *primary;
 	// rte_rwlock_t    vf_lock;
 	uint16_t	port_id;
 
@@ -180,6 +264,7 @@ struct hn_data {
 	uint32_t	link_speed;
 
 	struct rte_mem_resource *rxbuf_res;	/* UIO resource for Rx */
+	uint32_t		rxbuf_gpadl;
 	uint32_t	rxbuf_section_cnt;	/* # of Rx sections */
 	uint32_t	rx_copybreak;
 	uint32_t	rx_extmbuf_enable;
@@ -188,9 +273,11 @@ struct hn_data {
 	uint64_t	rss_offloads;
 
 	// rte_spinlock_t	chim_lock;
-	__spinlock chim_lock;
+	uk_spinlock chim_lock;
 	// struct rte_mem_resource *chim_res;	/* UIO resource for Tx */
+	struct rte_mem_resource chim_res;
 	// struct rte_bitmap *chim_bmap;		/* Send buffer map */
+	uint32_t		chim_gpadl;
 	void		*chim_bmem;
 	uint32_t	tx_copybreak;
 	uint32_t	chim_szmax;		/* Max size per buffer */
@@ -204,7 +291,7 @@ struct hn_data {
 	uint32_t	rndis_agg_align;
 
 	volatile uint32_t  rndis_pending;
-	// rte_atomic32_t	rndis_req_id;
+	rte_atomic32_t	rndis_req_id;
 	uint8_t		rndis_resp[256];
 
 	uint32_t	rss_hash;
@@ -226,8 +313,8 @@ hn_primary_chan(const struct hn_data *hv)
 	return hv->channels[0];
 }
 
-// uint32_t hn_process_events(struct hn_data *hv, uint16_t queue_id,
-// 		       uint32_t tx_limit);
+uint32_t hn_process_events(struct hn_data *hv, uint16_t queue_id,
+		       uint32_t tx_limit);
 
 // uint16_t hn_xmit_pkts(void *tx_queue, struct rte_mbuf **tx_pkts,
 // 		      uint16_t nb_pkts);
@@ -245,6 +332,7 @@ hn_recv(struct uk_netdev *n __unused,
 
 
 // int	hn_chim_init(struct rte_eth_dev *dev);
+int	hn_chim_init(struct uk_netdev *dev);
 // void	hn_chim_uninit(struct rte_eth_dev *dev);
 // int	hn_dev_link_update(struct rte_eth_dev *dev, int wait);
 // int	hn_dev_tx_queue_setup(struct rte_eth_dev *dev, uint16_t queue_idx,
@@ -350,7 +438,8 @@ struct hn_dev {
 	uint16_t  max_queue_pairs;
 	/* True if using split event channels */
 	/* bool split_evtchn; */
-	struct vmbus_channel **channels;
+	// struct vmbus_channel **channels;
+	// struct vmbus_channel *channels[HN_MAX_CHANNELS];
 
 	/* The netdevice identifier */
 	uint16_t uid;
@@ -361,5 +450,56 @@ struct hn_dev {
 	/* RX promiscuous mode. */
 	uint8_t promisc : 1;
 
-	struct hn_data hn_data;
+	void *dev_private;
 };
+
+#define to_hn_dev(dev) \
+	__containerof(dev, struct hn_dev, netdev)
+
+/* Taken from dpdk/lib/net/rte_ether.h */
+
+#define RTE_ETHER_ADDR_LEN  6 /**< Length of Ethernet address. */
+#define RTE_ETHER_TYPE_LEN  2 /**< Length of Ethernet type field. */
+#define RTE_ETHER_CRC_LEN   4 /**< Length of Ethernet CRC. */
+#define RTE_ETHER_HDR_LEN   \
+	(RTE_ETHER_ADDR_LEN * 2 + \
+		RTE_ETHER_TYPE_LEN) /**< Length of Ethernet header. */
+#define RTE_ETHER_MIN_LEN   64    /**< Minimum frame len, including CRC. */
+#define RTE_ETHER_MAX_LEN   1518  /**< Maximum frame len, including CRC. */
+#define RTE_ETHER_MTU       \
+	(RTE_ETHER_MAX_LEN - RTE_ETHER_HDR_LEN - \
+		RTE_ETHER_CRC_LEN) /**< Ethernet MTU. */
+
+/* Moved from hn_rxtx.c */
+/*
+ * Per-transmit book keeping.
+ * A slot in transmit ring (chim_index) is reserved for each transmit.
+ *
+ * There are two types of transmit:
+ *   - buffered transmit where chimney buffer is used and RNDIS header
+ *     is in the buffer. mbuf == NULL for this case.
+ *
+ *   - direct transmit where RNDIS header is in the in  rndis_pkt
+ *     mbuf is freed after transmit.
+ *
+ * Descriptors come from per-port pool which is used
+ * to limit number of outstanding requests per device.
+ */
+struct hn_txdesc {
+	// struct rte_mbuf *m;
+	struct uk_netbuf *m;
+
+	uint16_t	queue_id;
+	uint32_t	chim_index;
+	uint32_t	chim_size;
+	uint32_t	data_size;
+	uint32_t	packets;
+
+	struct rndis_packet_msg *rndis_pkt;
+};
+
+/* From FreeBSD if_hnvar.h */
+#define HN_CHIM_SIZE			(15 * 1024 * 1024)
+
+#define HN_RXBUF_SIZE			(31 * 1024 * 1024)
+#define HN_RXBUF_SIZE_COMPAT		(15 * 1024 * 1024)

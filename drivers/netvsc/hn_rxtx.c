@@ -13,23 +13,6 @@
 // #include <malloc.h>
 
 #include <uk/netbuf.h>
-// #include <rte_ethdev.h>
-// #include <rte_memcpy.h>
-// #include <rte_string_fns.h>
-// #include <rte_memzone.h>
-// #include <rte_malloc.h>
-// #include <rte_atomic.h>
-// #include <rte_bitmap.h>
-// #include <rte_branch_prediction.h>
-// #include <rte_ether.h>
-// #include <rte_common.h>
-// #include <rte_errno.h>
-// #include <rte_memory.h>
-// #include <rte_eal.h>
-// #include <rte_dev.h>
-// #include <rte_net.h>
-// #include <rte_bus_vmbus.h>
-// #include <rte_spinlock.h>
 
 #include <include/vmbus.h>
 
@@ -65,33 +48,6 @@ struct hn_rxinfo {
 #define HN_NDIS_VLAN_INFO_INVALID	0xffffffff
 #define HN_NDIS_RXCSUM_INFO_INVALID	0
 #define HN_NDIS_HASH_INFO_INVALID	0
-
-/*
- * Per-transmit book keeping.
- * A slot in transmit ring (chim_index) is reserved for each transmit.
- *
- * There are two types of transmit:
- *   - buffered transmit where chimney buffer is used and RNDIS header
- *     is in the buffer. mbuf == NULL for this case.
- *
- *   - direct transmit where RNDIS header is in the in  rndis_pkt
- *     mbuf is freed after transmit.
- *
- * Descriptors come from per-port pool which is used
- * to limit number of outstanding requests per device.
- */
-struct hn_txdesc {
-	// struct rte_mbuf *m;
-	struct uk_netbuf *m;
-
-	uint16_t	queue_id;
-	uint32_t	chim_index;
-	uint32_t	chim_size;
-	uint32_t	data_size;
-	uint32_t	packets;
-
-	struct rndis_packet_msg *rndis_pkt;
-};
 
 #define HN_RNDIS_PKT_LEN				\
 	(sizeof(struct rndis_packet_msg) +		\
@@ -167,11 +123,16 @@ hn_rndis_pktmsg_offset(uint32_t ofs)
 
 // int
 // hn_chim_init(struct rte_eth_dev *dev)
-// {
-// 	struct hn_data *hv = dev->data->dev_private;
-// 	uint32_t i, chim_bmp_size;
+int
+hn_chim_init(struct uk_netdev *dev)
+{
+	struct hn_dev *hndev = to_hn_dev(dev);
+	// struct hn_data *hv = dev->data->dev_private;
+	struct hn_data *hv = hndev->dev_private;
+	uint32_t i, chim_bmp_size;
 
 // 	rte_spinlock_init(&hv->chim_lock);
+	uk_spin_init(&hv->chim_lock);
 // 	chim_bmp_size = rte_bitmap_get_memory_footprint(hv->chim_cnt);
 // 	hv->chim_bmem = rte_zmalloc("hn_chim_bitmap", chim_bmp_size,
 // 				    RTE_CACHE_LINE_SIZE);
@@ -191,8 +152,8 @@ hn_rndis_pktmsg_offset(uint32_t ofs)
 // 	for (i = 0; i < hv->chim_cnt; i++)
 // 		rte_bitmap_set(hv->chim_bmap, i);
 
-// 	return 0;
-// }
+	return 0;
+}
 
 // void
 // hn_chim_uninit(struct rte_eth_dev *dev)
@@ -1068,13 +1029,13 @@ static void hn_txd_put(struct uk_netdev_tx_queue *txq, struct hn_txdesc *txd)
  * Process pending events on the channel.
  * Called from both Rx queue poll and Tx cleanup
  */
-// uint32_t hn_process_events(struct hn_data *hv, uint16_t queue_id,
-// 			   uint32_t tx_limit)
-// {
+uint32_t hn_process_events(struct hn_data *hv, uint16_t queue_id,
+			   uint32_t tx_limit)
+{
 // 	struct rte_eth_dev *dev = &rte_eth_devices[hv->port_id];
 // 	struct hn_rx_queue *rxq;
 // 	uint32_t bytes_read = 0;
-// 	uint32_t tx_done = 0;
+	uint32_t tx_done = 0;
 // 	int ret = 0;
 
 // 	rxq = queue_id == 0 ? hv->primary : dev->data->rx_queues[queue_id];
@@ -1149,8 +1110,8 @@ static void hn_txd_put(struct uk_netdev_tx_queue *txq, struct hn_txdesc *txd)
 
 // 	rte_spinlock_unlock(&rxq->ring_lock);
 
-// 	return tx_done;
-// }
+	return tx_done;
+}
 
 // static void hn_append_to_chim(struct hn_tx_queue *txq,
 // 			      struct rndis_packet_msg *pkt,

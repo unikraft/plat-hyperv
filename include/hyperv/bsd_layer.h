@@ -15,6 +15,7 @@
 
 #define PAGE_SIZE __PAGE_SIZE
 #define PAGE_SHIFT __PAGE_SHIFT
+#define PAGE_MASK __PAGE_MASK
 
 #define MAXCPU 1
 #define curcpu 0

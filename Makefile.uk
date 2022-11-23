@@ -168,6 +168,8 @@ LIBHYPERVNETVSC_CINCLUDES-y          += $(LIBHYPERVPLAT_CINCLUDES-y)
 #LIBHYPERVNETVSC_SRCS-y               += $(LIBHYPERVPLAT_BASE)/drivers/netvsc/if_hn.c
 LIBHYPERVNETVSC_SRCS-y               += $(LIBHYPERVPLAT_BASE)/drivers/netvsc/hn_ethdev.c
 LIBHYPERVNETVSC_SRCS-y               += $(LIBHYPERVPLAT_BASE)/drivers/netvsc/hn_rxtx.c
+LIBHYPERVNETVSC_SRCS-y               += $(LIBHYPERVPLAT_BASE)/drivers/netvsc/hn_nvs.c
+LIBHYPERVNETVSC_SRCS-y               += $(LIBHYPERVPLAT_BASE)/drivers/netvsc/hn_rndis.c
 endif
 
 

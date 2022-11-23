@@ -358,12 +358,12 @@ vmbus_msghc_exec(struct vmbus_softc *sc __unused, struct vmbus_msghc *mh)
 	return error;
 }
 
-// void
-// vmbus_msghc_exec_cancel(struct vmbus_softc *sc __unused, struct vmbus_msghc *mh)
-// {
+void
+vmbus_msghc_exec_cancel(struct vmbus_softc *sc __unused, struct vmbus_msghc *mh)
+{
 
-// 	vmbus_xact_deactivate(mh->mh_xact);
-// }
+	vmbus_xact_deactivate(mh->mh_xact);
+}
 
 const struct vmbus_message *
 vmbus_msghc_wait_result(struct vmbus_softc *sc __unused, struct vmbus_msghc *mh)
@@ -374,13 +374,13 @@ vmbus_msghc_wait_result(struct vmbus_softc *sc __unused, struct vmbus_msghc *mh)
 	return (vmbus_xact_wait(mh->mh_xact, &resp_len));
 }
 
-// const struct vmbus_message *
-// vmbus_msghc_poll_result(struct vmbus_softc *sc __unused, struct vmbus_msghc *mh)
-// {
-// 	size_t resp_len;
+const struct vmbus_message *
+vmbus_msghc_poll_result(struct vmbus_softc *sc __unused, struct vmbus_msghc *mh)
+{
+	size_t resp_len;
 
-// 	return (vmbus_xact_poll(mh->mh_xact, &resp_len));
-// }
+	return (vmbus_xact_poll(mh->mh_xact, &resp_len));
+}
 
 void
 vmbus_msghc_wakeup(struct vmbus_softc *sc, const struct vmbus_message *msg)
@@ -390,17 +390,17 @@ vmbus_msghc_wakeup(struct vmbus_softc *sc, const struct vmbus_message *msg)
 	uk_pr_info("[vmbus_msghc_wakeup] end\n");
 }
 
-// uint32_t
-// vmbus_gpadl_alloc(struct vmbus_softc *sc)
-// {
-// 	uint32_t gpadl;
+uint32_t
+vmbus_gpadl_alloc(struct vmbus_softc *sc)
+{
+	uint32_t gpadl;
 
-// again:
-// 	gpadl = atomic_fetchadd_int(&sc->vmbus_gpadl, 1);
-// 	if (gpadl == 0)
-// 		goto again;
-// 	return (gpadl);
-// }
+again:
+	gpadl = atomic_fetchadd_int(&sc->vmbus_gpadl, 1);
+	if (gpadl == 0)
+		goto again;
+	return (gpadl);
+}
 
 // /* Used for Hyper-V socket when guest client connects to host */
 // int
@@ -484,6 +484,8 @@ vmbus_init(struct vmbus_softc *sc)
 {
 	int i;
 	uk_pr_info("vmbus_init start\n");
+	uk_pr_info("[vmbus_init] nitems(vmbus_version: %d\n",
+		nitems(vmbus_version));
 	for (i = 0; i < nitems(vmbus_version); ++i) {
 		int error;
 
@@ -1993,7 +1995,7 @@ static int uk_vmbus_init(struct uk_alloc *a)
 	struct vmbus_driver *drv = NULL, *ndrv = NULL;
 	int ret = 0, dev_count = 0;
 
-	uk_pr_info("vmbus_init start\n");
+	uk_pr_info("uk_vmbus_init start\n");
 
 	vbh.a = a;
 
@@ -2011,7 +2013,7 @@ static int uk_vmbus_init(struct uk_alloc *a)
 		}
 	}
 
-	uk_pr_info("vmbus_init end\n");
+	uk_pr_info("uk_vmbus_init end\n");
 
 	return (dev_count > 0) ? dev_count : 0;
 }

@@ -16,24 +16,11 @@
 #include <errno.h>
 #include <unistd.h>
 
-#include <rte_ethdev.h>
-#include <rte_string_fns.h>
-#include <rte_memzone.h>
-#include <rte_malloc.h>
-#include <rte_atomic.h>
-#include <rte_branch_prediction.h>
-#include <rte_ether.h>
-#include <rte_common.h>
-#include <rte_errno.h>
-#include <rte_cycles.h>
-#include <rte_memory.h>
-#include <rte_eal.h>
-#include <rte_dev.h>
-#include <rte_bus_vmbus.h>
-
-#include "hn_logs.h"
+// #include "hn_logs.h"
 #include "hn_var.h"
 #include "hn_nvs.h"
+
+#include <include/vmbus.h>
 
 static const uint32_t hn_nvs_version[] = {
 	NVS_VERSION_61,
@@ -47,10 +34,15 @@ static const uint32_t hn_nvs_version[] = {
 static int hn_nvs_req_send(struct hn_data *hv,
 			   void *req, uint32_t reqlen)
 {
-	return rte_vmbus_chan_send(hn_primary_chan(hv),
+	// return rte_vmbus_chan_send(hn_primary_chan(hv),
+	// 			   VMBUS_CHANPKT_TYPE_INBAND,
+	// 			   req, reqlen, 0,
+	// 			   VMBUS_CHANPKT_FLAG_NONE, NULL);
+	return vmbus_chan_send(hn_primary_chan(hv),
 				   VMBUS_CHANPKT_TYPE_INBAND,
+				   VMBUS_CHANPKT_FLAG_NONE,
 				   req, reqlen, 0,
-				   VMBUS_CHANPKT_FLAG_NONE, NULL);
+				   NULL);
 }
 
 static int
@@ -67,30 +59,35 @@ __hn_nvs_execute(struct hn_data *hv,
 	int ret;
 
 	/* Send request to ring buffer */
-	ret = rte_vmbus_chan_send(chan, VMBUS_CHANPKT_TYPE_INBAND,
+	// ret = rte_vmbus_chan_send(chan, VMBUS_CHANPKT_TYPE_INBAND,
+	// 			  req, reqlen, 0,
+	// 			  VMBUS_CHANPKT_FLAG_RC, NULL);
+	ret = vmbus_chan_send(chan, VMBUS_CHANPKT_TYPE_INBAND,
+				  VMBUS_CHANPKT_FLAG_RC,
 				  req, reqlen, 0,
-				  VMBUS_CHANPKT_FLAG_RC, NULL);
+				  NULL);
 
 	if (ret) {
-		PMD_DRV_LOG(ERR, "send request failed: %d", ret);
+		uk_pr_err("send request failed: %d", ret);
 		return ret;
 	}
 
  retry:
 	len = sizeof(buffer);
-	ret = rte_vmbus_chan_recv(chan, buffer, &len, &xactid);
+	// ret = rte_vmbus_chan_recv(chan, buffer, &len, &xactid);
+	ret = vmbus_chan_recv(chan, buffer, &len, &xactid);
 	if (ret == -EAGAIN) {
 		rte_delay_us(HN_CHAN_INTERVAL_US);
 		goto retry;
 	}
 
 	if (ret < 0) {
-		PMD_DRV_LOG(ERR, "recv response failed: %d", ret);
+		uk_pr_err("recv response failed: %d", ret);
 		return ret;
 	}
 
 	if (len < sizeof(*hdr)) {
-		PMD_DRV_LOG(ERR, "response missing NVS header");
+		uk_pr_err("response missing NVS header");
 		return -EINVAL;
 	}
 
@@ -103,19 +100,18 @@ __hn_nvs_execute(struct hn_data *hv,
 		/* fallthrough */
 
 	case NVS_TYPE_TXTBL_NOTE:
-		PMD_DRV_LOG(DEBUG, "discard packet type 0x%x", hdr->type);
+		uk_pr_debug("discard packet type 0x%x", hdr->type);
 		goto retry;
 	}
 
 	if (hdr->type != type) {
-		PMD_DRV_LOG(ERR, "unexpected NVS resp %#x, expect %#x",
+		uk_pr_err("unexpected NVS resp %#x, expect %#x",
 			    hdr->type, type);
 		return -EINVAL;
 	}
 
 	if (len < resplen) {
-		PMD_DRV_LOG(ERR,
-			    "invalid NVS resp len %u (expect %u)",
+		uk_pr_err("invalid NVS resp len %u (expect %u)",
 			    len, resplen);
 		return -EINVAL;
 	}
@@ -139,14 +135,47 @@ hn_nvs_execute(struct hn_data *hv,
 	       void *resp, uint32_t resplen,
 	       uint32_t type)
 {
-	struct hn_rx_queue *rxq = hv->primary;
+	// struct hn_rx_queue *rxq = hv->primary;
+	struct uk_netdev_rx_queue *rxq = hv->primary;
 	int ret;
 
-	rte_spinlock_lock(&rxq->ring_lock);
+	//rte_spinlock_lock(&rxq->ring_lock);
+	uk_spin_lock(&rxq->ring_lock);
 	ret = __hn_nvs_execute(hv, req, reqlen, resp, resplen, type);
-	rte_spinlock_unlock(&rxq->ring_lock);
+	// rte_spinlock_unlock(&rxq->ring_lock);
+	uk_spin_lock(&rxq->ring_lock);
 
 	return ret;
+}
+
+static int
+hn_nvs_doinit(struct hn_data *hv, uint32_t nvs_ver)
+{
+	struct hn_nvs_init init;
+	struct hn_nvs_init_resp resp;
+	uint32_t status;
+	int error;
+
+	memset(&init, 0, sizeof(init));
+	init.type = NVS_TYPE_INIT;
+	init.ver_min = nvs_ver;
+	init.ver_max = nvs_ver;
+
+	error = hn_nvs_execute(hv, &init, sizeof(init),
+			       &resp, sizeof(resp),
+			       NVS_TYPE_INIT_RESP);
+	if (error)
+		return error;
+
+	status = resp.status;
+	if (status != NVS_STATUS_OK) {
+		/* Not fatal, try other versions */
+		uk_pr_debug("nvs init failed for ver 0x%x",
+			     nvs_ver);
+		return -EINVAL;
+	}
+
+	return 0;
 }
 
 static int
@@ -165,7 +194,7 @@ hn_nvs_conn_rxbuf(struct hn_data *hv)
 	conn.type = NVS_TYPE_RXBUF_CONN;
 	conn.gpadl = hv->rxbuf_res->phys_addr;
 	conn.sig = NVS_RXBUF_SIG;
-	PMD_DRV_LOG(DEBUG, "connect rxbuff va=%p gpad=%#" PRIx64,
+	uk_pr_debug("connect rxbuff va=%p gpad=%#" PRIx64,
 		    hv->rxbuf_res->addr,
 		    hv->rxbuf_res->phys_addr);
 
@@ -173,27 +202,23 @@ hn_nvs_conn_rxbuf(struct hn_data *hv)
 			       &resp, sizeof(resp),
 			       NVS_TYPE_RXBUF_CONNRESP);
 	if (error) {
-		PMD_DRV_LOG(ERR,
-			    "exec nvs rxbuf conn failed: %d",
+		uk_pr_err("exec nvs rxbuf conn failed: %d",
 			    error);
 		return error;
 	}
 
 	status = resp.status;
 	if (status != NVS_STATUS_OK) {
-		PMD_DRV_LOG(ERR,
-			    "nvs rxbuf conn failed: %x", status);
+		uk_pr_err("nvs rxbuf conn failed: %x", status);
 		return -EIO;
 	}
 	if (resp.nsect != 1) {
-		PMD_DRV_LOG(ERR,
-			    "nvs rxbuf response num sections %u != 1",
+		uk_pr_err("nvs rxbuf response num sections %u != 1",
 			    resp.nsect);
 		return -EIO;
 	}
 
-	PMD_DRV_LOG(INFO,
-		    "receive buffer size %u count %u",
+	uk_pr_info("receive buffer size %u count %u",
 		    resp.nvs_sect[0].slotsz,
 		    resp.nvs_sect[0].slotcnt);
 	hv->rxbuf_section_cnt = resp.nvs_sect[0].slotcnt;
@@ -202,73 +227,19 @@ hn_nvs_conn_rxbuf(struct hn_data *hv)
 	 * Primary queue's rxbuf_info is not allocated at creation time.
 	 * Now we can allocate it after we figure out the slotcnt.
 	 */
-	hv->primary->rxbuf_info = rte_calloc("HN_RXBUF_INFO",
+	// hv->primary->rxbuf_info = rte_calloc("HN_RXBUF_INFO",
+	// 		hv->rxbuf_section_cnt,
+	// 		sizeof(*hv->primary->rxbuf_info),
+	// 		RTE_CACHE_LINE_SIZE);
+	hv->primary->rxbuf_info = uk_calloc(hv->a,
 			hv->rxbuf_section_cnt,
-			sizeof(*hv->primary->rxbuf_info),
-			RTE_CACHE_LINE_SIZE);
+			sizeof(*hv->primary->rxbuf_info));
 	if (!hv->primary->rxbuf_info) {
-		PMD_DRV_LOG(ERR,
-			    "could not allocate rxbuf info");
+		uk_pr_err("could not allocate rxbuf info");
 		return -ENOMEM;
 	}
 
 	return 0;
-}
-
-static int
-hn_nvs_conn_chim(struct hn_data *hv)
-{
-	struct hn_nvs_chim_conn chim;
-	struct hn_nvs_chim_connresp resp;
-	uint32_t sectsz;
-	unsigned long len = hv->chim_res->len;
-	int error;
-
-	/* Connect chimney sending buffer to NVS */
-	memset(&chim, 0, sizeof(chim));
-	chim.type = NVS_TYPE_CHIM_CONN;
-	chim.gpadl = hv->chim_res->phys_addr;
-	chim.sig = NVS_CHIM_SIG;
-	PMD_DRV_LOG(DEBUG, "connect send buf va=%p gpad=%#" PRIx64,
-		    hv->chim_res->addr,
-		    hv->chim_res->phys_addr);
-
-	error = hn_nvs_execute(hv, &chim, sizeof(chim),
-			       &resp, sizeof(resp),
-			       NVS_TYPE_CHIM_CONNRESP);
-	if (error) {
-		PMD_DRV_LOG(ERR, "exec nvs chim conn failed");
-		return error;
-	}
-
-	if (resp.status != NVS_STATUS_OK) {
-		PMD_DRV_LOG(ERR, "nvs chim conn failed: %x",
-			    resp.status);
-		return -EIO;
-	}
-
-	sectsz = resp.sectsz;
-	if (sectsz == 0 || sectsz & (sizeof(uint32_t) - 1)) {
-		/* Can't use chimney sending buffer; done! */
-		PMD_DRV_LOG(NOTICE,
-			    "invalid chimney sending buffer section size: %u",
-			    sectsz);
-		error = -EINVAL;
-		goto cleanup;
-	}
-
-	hv->chim_szmax = sectsz;
-	hv->chim_cnt = len / sectsz;
-
-	PMD_DRV_LOG(INFO, "send buffer %lu section size:%u, count:%u",
-		    len, hv->chim_szmax, hv->chim_cnt);
-
-	/* Done! */
-	return 0;
-
-cleanup:
-	hn_nvs_disconn_chim(hv);
-	return error;
 }
 
 static void
@@ -287,7 +258,7 @@ hn_nvs_disconn_rxbuf(struct hn_data *hv)
 	/* NOTE: No response. */
 	error = hn_nvs_req_send(hv, &disconn, sizeof(disconn));
 	if (error) {
-		PMD_DRV_LOG(ERR,
+		uk_pr_err(
 			    "send nvs rxbuf disconn failed: %d",
 			    error);
 	}
@@ -315,8 +286,7 @@ hn_nvs_disconn_chim(struct hn_data *hv)
 		error = hn_nvs_req_send(hv, &disconn, sizeof(disconn));
 
 		if (error) {
-			PMD_DRV_LOG(ERR,
-				    "send nvs chim disconn failed: %d", error);
+			uk_pr_err("send nvs chim disconn failed: %d", error);
 		}
 
 		hv->chim_cnt = 0;
@@ -329,33 +299,80 @@ hn_nvs_disconn_chim(struct hn_data *hv)
 }
 
 static int
-hn_nvs_doinit(struct hn_data *hv, uint32_t nvs_ver)
+hn_nvs_conn_chim(struct hn_data *hv)
 {
-	struct hn_nvs_init init;
-	struct hn_nvs_init_resp resp;
-	uint32_t status;
+	struct hn_nvs_chim_conn chim;
+	struct hn_nvs_chim_connresp resp;
+	uint32_t sectsz;
+	// unsigned long len = hv->chim_res->len;
+	unsigned long len = hv->chim_res.len;
 	int error;
 
-	memset(&init, 0, sizeof(init));
-	init.type = NVS_TYPE_INIT;
-	init.ver_min = nvs_ver;
-	init.ver_max = nvs_ver;
+	/* START From FreeBSD */
+	/*
+	 * Connect chimney sending buffer GPADL to the primary channel.
+	 *
+	 * NOTE:
+	 * Only primary channel has chimney sending buffer connected to it.
+	 * Sub-channels just share this chimney sending buffer.
+	 */
+	// error = vmbus_chan_gpadl_connect(hv->channels[0],
+  	//     hv->chim_res->phys_addr, HN_CHIM_SIZE, &hv->chim);
 
-	error = hn_nvs_execute(hv, &init, sizeof(init),
+	error = vmbus_chan_gpadl_connect(hv->channels[0],
+  	    hv->chim_res.phys_addr, HN_CHIM_SIZE, &hv->chim_gpadl);
+	if (error) {
+		uk_pr_err("chim gpadl conn failed: %d\n", error);
+		goto cleanup;
+	}
+	/* END */
+
+	/* Connect chimney sending buffer to NVS */
+	memset(&chim, 0, sizeof(chim));
+	chim.type = NVS_TYPE_CHIM_CONN;
+	// chim.gpadl = hv->chim_res->phys_addr;
+	chim.gpadl = hv->chim_res.phys_addr;
+	chim.sig = NVS_CHIM_SIG;
+	uk_pr_debug("connect send buf va=%p gpad=%#" PRIx64,
+		    hv->chim_res.addr,
+		    hv->chim_res.phys_addr);
+
+	error = hn_nvs_execute(hv, &chim, sizeof(chim),
 			       &resp, sizeof(resp),
-			       NVS_TYPE_INIT_RESP);
-	if (error)
+			       NVS_TYPE_CHIM_CONNRESP);
+	if (error) {
+		uk_pr_err("exec nvs chim conn failed");
 		return error;
-
-	status = resp.status;
-	if (status != NVS_STATUS_OK) {
-		/* Not fatal, try other versions */
-		PMD_INIT_LOG(DEBUG, "nvs init failed for ver 0x%x",
-			     nvs_ver);
-		return -EINVAL;
 	}
 
+	if (resp.status != NVS_STATUS_OK) {
+		uk_pr_err("nvs chim conn failed: %x",
+			    resp.status);
+		return -EIO;
+	}
+
+	sectsz = resp.sectsz;
+	if (sectsz == 0 || sectsz & (sizeof(uint32_t) - 1)) {
+		/* Can't use chimney sending buffer; done! */
+		uk_pr_warn("invalid chimney sending buffer section size: %u",
+			    sectsz);
+		error = -EINVAL;
+		goto cleanup;
+	}
+
+	hv->chim_szmax = sectsz;
+	hv->chim_cnt = len / sectsz;
+
+	uk_pr_info("send buffer %lu section size:%u, count:%u",
+		    len, hv->chim_szmax, hv->chim_cnt);
+
+
+	/* Done! */
 	return 0;
+
+cleanup:
+	hn_nvs_disconn_chim(hv);
+	return error;
 }
 
 /*
@@ -379,8 +396,7 @@ hn_nvs_conf_ndis(struct hn_data *hv, unsigned int mtu)
 	/* NOTE: No response. */
 	error = hn_nvs_req_send(hv, &conf, sizeof(conf));
 	if (error) {
-		PMD_DRV_LOG(ERR,
-			    "send nvs ndis conf failed: %d", error);
+		uk_pr_err("send nvs ndis conf failed: %d", error);
 		return error;
 	}
 
@@ -401,8 +417,7 @@ hn_nvs_init_ndis(struct hn_data *hv)
 	/* NOTE: No response. */
 	error = hn_nvs_req_send(hv, &ndis, sizeof(ndis));
 	if (error)
-		PMD_DRV_LOG(ERR,
-			    "send nvs ndis init failed: %d", error);
+		uk_pr_err("send nvs ndis init failed: %d", error);
 
 	return error;
 }
@@ -416,10 +431,10 @@ hn_nvs_init(struct hn_data *hv)
 	/*
 	 * Find the supported NVS version and set NDIS version accordingly.
 	 */
-	for (i = 0; i < RTE_DIM(hn_nvs_version); ++i) {
+	for (i = 0; i < ARRAY_SIZE(hn_nvs_version); ++i) {
 		error = hn_nvs_doinit(hv, hn_nvs_version[i]);
 		if (error) {
-			PMD_INIT_LOG(DEBUG, "version %#x error %d",
+			uk_pr_debug("version %#x error %d",
 				     hn_nvs_version[i], error);
 			continue;
 		}
@@ -431,15 +446,13 @@ hn_nvs_init(struct hn_data *hv)
 		if (hv->nvs_ver <= NVS_VERSION_4)
 			hv->ndis_ver = NDIS_VERSION_6_1;
 
-		PMD_INIT_LOG(DEBUG,
-			     "NVS version %#x, NDIS version %u.%u",
+		uk_pr_debug("NVS version %#x, NDIS version %u.%u",
 			     hv->nvs_ver, NDIS_VERSION_MAJOR(hv->ndis_ver),
 			     NDIS_VERSION_MINOR(hv->ndis_ver));
 		return 0;
 	}
 
-	PMD_DRV_LOG(ERR,
-		    "no NVS compatible version available");
+	uk_pr_debug("no NVS compatible version available");
 	return -ENXIO;
 }
 
@@ -489,10 +502,8 @@ hn_nvs_attach(struct hn_data *hv, unsigned int mtu)
 }
 
 void
-hn_nvs_detach(struct hn_data *hv __rte_unused)
+hn_nvs_detach(struct hn_data *hv __unused)
 {
-	PMD_INIT_FUNC_TRACE();
-
 	/* NOTE: there are no requests to stop the NVS. */
 	hn_nvs_disconn_rxbuf(hv);
 	hn_nvs_disconn_chim(hv);
@@ -512,12 +523,16 @@ hn_nvs_ack_rxbuf(struct vmbus_channel *chan, uint64_t tid)
 	};
 	int error;
 
-	PMD_RX_LOG(DEBUG, "ack RX id %" PRIu64, tid);
+	uk_pr_debug("ack RX id %" PRIu64, tid);
 
  again:
-	error = rte_vmbus_chan_send(chan, VMBUS_CHANPKT_TYPE_COMP,
+	// error = rte_vmbus_chan_send(chan, VMBUS_CHANPKT_TYPE_COMP,
+	// 			    &ack, sizeof(ack), tid,
+	// 			    VMBUS_CHANPKT_FLAG_NONE, NULL);
+	error = vmbus_chan_send(chan, VMBUS_CHANPKT_TYPE_COMP,
+					VMBUS_CHANPKT_FLAG_NONE,
 				    &ack, sizeof(ack), tid,
-				    VMBUS_CHANPKT_FLAG_NONE, NULL);
+				    NULL);
 
 	if (error == 0)
 		return;
@@ -529,70 +544,70 @@ hn_nvs_ack_rxbuf(struct vmbus_channel *chan, uint64_t tid)
 		 * consumption of the TX bufring from the TX path is
 		 * controlled.
 		 */
-		PMD_RX_LOG(NOTICE, "RXBUF ack retry");
+		uk_pr_warn("RXBUF ack retry");
 		if (++retries < 10) {
 			rte_delay_ms(1);
 			goto again;
 		}
 	}
 	/* RXBUF leaks! */
-	PMD_DRV_LOG(ERR, "RXBUF ack failed");
+	uk_pr_err("RXBUF ack failed");
 }
 
-int
-hn_nvs_alloc_subchans(struct hn_data *hv, uint32_t *nsubch)
-{
-	struct hn_nvs_subch_req req;
-	struct hn_nvs_subch_resp resp;
-	int error;
+// int
+// hn_nvs_alloc_subchans(struct hn_data *hv, uint32_t *nsubch)
+// {
+// 	struct hn_nvs_subch_req req;
+// 	struct hn_nvs_subch_resp resp;
+// 	int error;
 
-	memset(&req, 0, sizeof(req));
-	req.type = NVS_TYPE_SUBCH_REQ;
-	req.op = NVS_SUBCH_OP_ALLOC;
-	req.nsubch = *nsubch;
+// 	memset(&req, 0, sizeof(req));
+// 	req.type = NVS_TYPE_SUBCH_REQ;
+// 	req.op = NVS_SUBCH_OP_ALLOC;
+// 	req.nsubch = *nsubch;
 
-	error = hn_nvs_execute(hv, &req, sizeof(req),
-			       &resp, sizeof(resp),
-			       NVS_TYPE_SUBCH_RESP);
-	if (error)
-		return error;
+// 	error = hn_nvs_execute(hv, &req, sizeof(req),
+// 			       &resp, sizeof(resp),
+// 			       NVS_TYPE_SUBCH_RESP);
+// 	if (error)
+// 		return error;
 
-	if (resp.status != NVS_STATUS_OK) {
-		PMD_INIT_LOG(ERR,
-			     "nvs subch alloc failed: %#x",
-			     resp.status);
-		return -EIO;
-	}
+// 	if (resp.status != NVS_STATUS_OK) {
+// 		PMD_INIT_LOG(ERR,
+// 			     "nvs subch alloc failed: %#x",
+// 			     resp.status);
+// 		return -EIO;
+// 	}
 
-	if (resp.nsubch > *nsubch) {
-		PMD_INIT_LOG(NOTICE,
-			     "%u subchans are allocated, requested %u",
-			     resp.nsubch, *nsubch);
-	}
-	*nsubch = resp.nsubch;
+// 	if (resp.nsubch > *nsubch) {
+// 		PMD_INIT_LOG(NOTICE,
+// 			     "%u subchans are allocated, requested %u",
+// 			     resp.nsubch, *nsubch);
+// 	}
+// 	*nsubch = resp.nsubch;
 
-	return 0;
-}
+// 	return 0;
+// }
 
-int
-hn_nvs_set_datapath(struct hn_data *hv, uint32_t path)
-{
-	struct hn_nvs_datapath dp;
-	int error;
+// int
+// hn_nvs_set_datapath(struct hn_data *hv, uint32_t path)
+// {
+// 	struct hn_nvs_datapath dp;
+// 	int error;
 
-	PMD_DRV_LOG(DEBUG, "set datapath %s",
-		    path ? "VF" : "Synthetic");
+// 	PMD_DRV_LOG(DEBUG, "set datapath %s",
+// 		    path ? "VF" : "Synthetic");
 
-	memset(&dp, 0, sizeof(dp));
-	dp.type = NVS_TYPE_SET_DATAPATH;
-	dp.active_path = path;
+// 	memset(&dp, 0, sizeof(dp));
+// 	dp.type = NVS_TYPE_SET_DATAPATH;
+// 	dp.active_path = path;
 
-	error = hn_nvs_req_send(hv, &dp, sizeof(dp));
-	if (error) {
-		PMD_DRV_LOG(ERR,
-			    "send set datapath failed: %d",
-			    error);
-	}
+// 	error = hn_nvs_req_send(hv, &dp, sizeof(dp));
+// 	if (error) {
+// 		PMD_DRV_LOG(ERR,
+// 			    "send set datapath failed: %d",
+// 			    error);
+// 	}
 
-	return error;
-}
+// 	return error;
+// }

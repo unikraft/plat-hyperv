@@ -372,46 +372,46 @@ vmbus_chan_rem_list(struct vmbus_softc *sc, struct vmbus_channel *chan)
 // 	return (error);
 // }
 
-// int
-// vmbus_chan_open_br(struct vmbus_channel *chan, const struct vmbus_chan_br *cbr,
-//     const void *udata, int udlen, vmbus_chan_callback_t cb, void *cbarg)
-// {
-// 	struct vmbus_softc *sc = chan->ch_vmbus;
-// 	const struct vmbus_message *msg;
-// 	struct vmbus_chanmsg_chopen *req;
-// 	struct vmbus_msghc *mh;
-// 	uint32_t status;
-// 	int error, txbr_size, rxbr_size;
-// 	task_fn_t *task_fn;
-// 	uint8_t *br;
+int
+vmbus_chan_open_br(struct vmbus_channel *chan, const struct vmbus_chan_br *cbr,
+    const void *udata, int udlen, vmbus_chan_callback_t cb, void *cbarg)
+{
+	struct vmbus_softc *sc = chan->ch_vmbus;
+	const struct vmbus_message *msg;
+	struct vmbus_chanmsg_chopen *req;
+	struct vmbus_msghc *mh;
+	uint32_t status;
+	int error, txbr_size, rxbr_size;
+	task_fn_t *task_fn;
+	uint8_t *br;
 
-// 	if (udlen > VMBUS_CHANMSG_CHOPEN_UDATA_SIZE) {
-// 		vmbus_chan_printf(chan,
-// 		    "invalid udata len %d for chan%u\n", udlen, chan->ch_id);
-// 		return (EINVAL);
-// 	}
+	if (udlen > VMBUS_CHANMSG_CHOPEN_UDATA_SIZE) {
+		vmbus_chan_printf(chan,
+		    "invalid udata len %d for chan%u\n", udlen, chan->ch_id);
+		return (EINVAL);
+	}
 
-// 	br = cbr->cbr;
-// 	txbr_size = cbr->cbr_txsz;
-// 	rxbr_size = cbr->cbr_rxsz;
-// 	KASSERT((txbr_size & PAGE_MASK) == 0,
-// 	    ("send bufring size is not multiple page"));
-// 	KASSERT((rxbr_size & PAGE_MASK) == 0,
-// 	    ("recv bufring size is not multiple page"));
-// 	KASSERT((cbr->cbr_paddr & PAGE_MASK) == 0,
-// 	    ("bufring is not page aligned"));
+	br = cbr->cbr;
+	txbr_size = cbr->cbr_txsz;
+	rxbr_size = cbr->cbr_rxsz;
+	KASSERT((txbr_size & PAGE_MASK) == 0,
+	    ("send bufring size is not multiple page"));
+	KASSERT((rxbr_size & PAGE_MASK) == 0,
+	    ("recv bufring size is not multiple page"));
+	KASSERT((cbr->cbr_paddr & PAGE_MASK) == 0,
+	    ("bufring is not page aligned"));
 
-// 	/*
-// 	 * Zero out the TX/RX bufrings, in case that they were used before.
-// 	 */
-// 	memset(br, 0, txbr_size + rxbr_size);
+	/*
+	 * Zero out the TX/RX bufrings, in case that they were used before.
+	 */
+	memset(br, 0, txbr_size + rxbr_size);
 
 // 	if (atomic_testandset_int(&chan->ch_stflags,
 // 	    VMBUS_CHAN_ST_OPENED_SHIFT))
 // 		panic("double-open chan%u", chan->ch_id);
 
-// 	chan->ch_cb = cb;
-// 	chan->ch_cbarg = cbarg;
+	chan->ch_cb = cb;
+	chan->ch_cbarg = cbarg;
 
 // 	vmbus_chan_update_evtflagcnt(sc, chan);
 
@@ -430,115 +430,115 @@ vmbus_chan_rem_list(struct vmbus_softc *sc, struct vmbus_channel *chan)
 // 	/* Create sysctl tree for this channel */
 // 	vmbus_chan_sysctl_create(chan);
 
-// 	/*
-// 	 * Connect the bufrings, both RX and TX, to this channel.
-// 	 */
-// 	error = vmbus_chan_gpadl_connect(chan, cbr->cbr_paddr,
-// 	    txbr_size + rxbr_size, &chan->ch_bufring_gpadl);
-// 	if (error) {
-// 		vmbus_chan_printf(chan,
-// 		    "failed to connect bufring GPADL to chan%u\n", chan->ch_id);
-// 		goto failed;
-// 	}
+	/*
+	 * Connect the bufrings, both RX and TX, to this channel.
+	 */
+	error = vmbus_chan_gpadl_connect(chan, cbr->cbr_paddr,
+	    txbr_size + rxbr_size, &chan->ch_bufring_gpadl);
+	if (error) {
+		vmbus_chan_printf(chan,
+		    "failed to connect bufring GPADL to chan%u\n", chan->ch_id);
+		goto failed;
+	}
 
-// 	/*
-// 	 * Install this channel, before it is opened, but after everything
-// 	 * else has been setup.
-// 	 */
-// 	vmbus_chan_set_chmap(chan);
+	/*
+	 * Install this channel, before it is opened, but after everything
+	 * else has been setup.
+	 */
+	// vmbus_chan_set_chmap(chan);
 
-// 	/*
-// 	 * Open channel w/ the bufring GPADL on the target CPU.
-// 	 */
-// 	mh = vmbus_msghc_get(sc, sizeof(*req));
-// 	if (mh == NULL) {
-// 		vmbus_chan_printf(chan,
-// 		    "can not get msg hypercall for chopen(chan%u)\n",
-// 		    chan->ch_id);
-// 		error = ENXIO;
-// 		goto failed;
-// 	}
+	/*
+	 * Open channel w/ the bufring GPADL on the target CPU.
+	 */
+	mh = vmbus_msghc_get(sc, sizeof(*req));
+	if (mh == NULL) {
+		vmbus_chan_printf(chan,
+		    "can not get msg hypercall for chopen(chan%u)\n",
+		    chan->ch_id);
+		error = ENXIO;
+		goto failed;
+	}
 
-// 	req = vmbus_msghc_dataptr(mh);
-// 	req->chm_hdr.chm_type = VMBUS_CHANMSG_TYPE_CHOPEN;
-// 	req->chm_chanid = chan->ch_id;
-// 	req->chm_openid = chan->ch_id;
-// 	req->chm_gpadl = chan->ch_bufring_gpadl;
-// 	req->chm_vcpuid = chan->ch_vcpuid;
-// 	req->chm_txbr_pgcnt = txbr_size >> PAGE_SHIFT;
-// 	if (udlen > 0)
-// 		memcpy(req->chm_udata, udata, udlen);
+	req = vmbus_msghc_dataptr(mh);
+	req->chm_hdr.chm_type = VMBUS_CHANMSG_TYPE_CHOPEN;
+	req->chm_chanid = chan->ch_id;
+	req->chm_openid = chan->ch_id;
+	req->chm_gpadl = chan->ch_bufring_gpadl;
+	req->chm_vcpuid = chan->ch_vcpuid;
+	req->chm_txbr_pgcnt = txbr_size >> PAGE_SHIFT;
+	if (udlen > 0)
+		memcpy(req->chm_udata, udata, udlen);
 
-// 	error = vmbus_msghc_exec(sc, mh);
-// 	if (error) {
-// 		vmbus_chan_printf(chan,
-// 		    "chopen(chan%u) msg hypercall exec failed: %d\n",
-// 		    chan->ch_id, error);
-// 		vmbus_msghc_put(sc, mh);
-// 		goto failed;
-// 	}
+	error = vmbus_msghc_exec(sc, mh);
+	if (error) {
+		vmbus_chan_printf(chan,
+		    "chopen(chan%u) msg hypercall exec failed: %d\n",
+		    chan->ch_id, error);
+		vmbus_msghc_put(sc, mh);
+		goto failed;
+	}
 
-// 	for (;;) {
-// 		msg = vmbus_msghc_poll_result(sc, mh);
-// 		if (msg != NULL)
-// 			break;
-// 		if (vmbus_chan_is_revoked(chan)) {
-// 			int i;
+	for (;;) {
+		msg = vmbus_msghc_poll_result(sc, mh);
+		if (msg != NULL)
+			break;
+		if (vmbus_chan_is_revoked(chan)) {
+			int i;
 
-// 			/*
-// 			 * NOTE:
-// 			 * Hypervisor does _not_ send response CHOPEN to
-// 			 * a revoked channel.
-// 			 */
-// 			vmbus_chan_printf(chan,
-// 			    "chan%u is revoked, when it is being opened\n",
-// 			    chan->ch_id);
+			/*
+			 * NOTE:
+			 * Hypervisor does _not_ send response CHOPEN to
+			 * a revoked channel.
+			 */
+			vmbus_chan_printf(chan,
+			    "chan%u is revoked, when it is being opened\n",
+			    chan->ch_id);
 
-// 			/*
-// 			 * XXX
-// 			 * Add extra delay before cancel the hypercall
-// 			 * execution; mainly to close any possible
-// 			 * CHRESCIND and CHOPEN_RESP races on the
-// 			 * hypervisor side.
-// 			 */
-// #define REVOKE_LINGER	100
-// 			for (i = 0; i < REVOKE_LINGER; ++i) {
-// 				msg = vmbus_msghc_poll_result(sc, mh);
-// 				if (msg != NULL)
-// 					break;
-// 				pause("rchopen", 1);
-// 			}
-// #undef REVOKE_LINGER
-// 			if (msg == NULL)
-// 				vmbus_msghc_exec_cancel(sc, mh);
-// 			break;
-// 		}
-// 		pause("chopen", 1);
-// 	}
-// 	if (msg != NULL) {
-// 		status = ((const struct vmbus_chanmsg_chopen_resp *)
-// 		    msg->msg_data)->chm_status;
-// 	} else {
-// 		/* XXX any non-0 value is ok here. */
-// 		status = 0xff;
-// 	}
+			/*
+			 * XXX
+			 * Add extra delay before cancel the hypercall
+			 * execution; mainly to close any possible
+			 * CHRESCIND and CHOPEN_RESP races on the
+			 * hypervisor side.
+			 */
+#define REVOKE_LINGER	100
+			for (i = 0; i < REVOKE_LINGER; ++i) {
+				msg = vmbus_msghc_poll_result(sc, mh);
+				if (msg != NULL)
+					break;
+				// pause("rchopen", 1);
+			}
+#undef REVOKE_LINGER
+			if (msg == NULL)
+				vmbus_msghc_exec_cancel(sc, mh);
+			break;
+		}
+		// pause("chopen", 1);
+	}
+	if (msg != NULL) {
+		status = ((const struct vmbus_chanmsg_chopen_resp *)
+		    msg->msg_data)->chm_status;
+	} else {
+		/* XXX any non-0 value is ok here. */
+		status = 0xff;
+	}
 
-// 	vmbus_msghc_put(sc, mh);
+	vmbus_msghc_put(sc, mh);
 
-// 	if (status == 0) {
-// 		if (bootverbose)
-// 			vmbus_chan_printf(chan, "chan%u opened\n", chan->ch_id);
-// 		return (0);
-// 	}
+	if (status == 0) {
+		if (bootverbose)
+			vmbus_chan_printf(chan, "chan%u opened\n", chan->ch_id);
+		return (0);
+	}
 
-// 	vmbus_chan_printf(chan, "failed to open chan%u\n", chan->ch_id);
-// 	error = ENXIO;
+	vmbus_chan_printf(chan, "failed to open chan%u\n", chan->ch_id);
+	error = ENXIO;
 
-// failed:
+failed:
 // 	sysctl_ctx_free(&chan->ch_sysctl_ctx);
 // 	vmbus_chan_clear_chmap(chan);
-// 	if (chan->ch_bufring_gpadl != 0) {
-// 		int error1;
+	if (chan->ch_bufring_gpadl != 0) {
+		int error1;
 
 // 		error1 = vmbus_chan_gpadl_disconnect(chan,
 // 		    chan->ch_bufring_gpadl);
@@ -549,141 +549,148 @@ vmbus_chan_rem_list(struct vmbus_softc *sc, struct vmbus_channel *chan)
 // 			 */
 // 			error = EISCONN;
 // 		}
-// 		chan->ch_bufring_gpadl = 0;
-// 	}
+		chan->ch_bufring_gpadl = 0;
+	}
 // 	atomic_clear_int(&chan->ch_stflags, VMBUS_CHAN_ST_OPENED);
-// 	return (error);
-// }
+	return (error);
+}
 
-// int
-// vmbus_chan_gpadl_connect(struct vmbus_channel *chan, bus_addr_t paddr,
-//     int size, uint32_t *gpadl0)
-// {
-// 	struct vmbus_softc *sc = chan->ch_vmbus;
-// 	struct vmbus_msghc *mh;
-// 	struct vmbus_chanmsg_gpadl_conn *req;
-// 	const struct vmbus_message *msg;
-// 	size_t reqsz;
-// 	uint32_t gpadl, status;
-// 	int page_count, range_len, i, cnt, error;
-// 	uint64_t page_id;
+int
+vmbus_chan_gpadl_connect(struct vmbus_channel *chan, bus_addr_t paddr,
+    int size, uint32_t *gpadl0)
+{
+	struct vmbus_softc *sc = chan->ch_vmbus;
+	struct vmbus_msghc *mh;
+	struct vmbus_chanmsg_gpadl_conn *req;
+	const struct vmbus_message *msg;
+	size_t reqsz;
+	uint32_t gpadl, status;
+	int page_count, range_len, i, cnt, error;
+	uint64_t page_id;
 
 // 	KASSERT(*gpadl0 == 0, ("GPADL is not zero"));
 
-// 	/*
-// 	 * Preliminary checks.
-// 	 */
+	/*
+	 * Preliminary checks.
+	 */
 
 // 	KASSERT((size & PAGE_MASK) == 0,
 // 	    ("invalid GPA size %d, not multiple page size", size));
-// 	page_count = size >> PAGE_SHIFT;
+	page_count = size >> PAGE_SHIFT;
 
 // 	KASSERT((paddr & PAGE_MASK) == 0,
 // 	    ("GPA is not page aligned %jx", (uintmax_t)paddr));
-// 	page_id = paddr >> PAGE_SHIFT;
+	page_id = paddr >> PAGE_SHIFT;
 
-// 	range_len = __offsetof(struct vmbus_gpa_range, gpa_page[page_count]);
-// 	/*
-// 	 * We don't support multiple GPA ranges.
-// 	 */
-// 	if (range_len > UINT16_MAX) {
-// 		vmbus_chan_printf(chan, "GPA too large, %d pages\n",
-// 		    page_count);
-// 		return EOPNOTSUPP;
-// 	}
+	// range_len = __offsetof(struct vmbus_gpa_range, gpa_page[page_count]);
+	range_len = __offsetof(struct vmbus_gpa_range, page[page_count]);
+	/*
+	 * We don't support multiple GPA ranges.
+	 */
+	if (range_len > UINT16_MAX) {
+		vmbus_chan_printf(chan, "GPA too large, %d pages\n",
+		    page_count);
+		return EOPNOTSUPP;
+	}
 
-// 	/*
-// 	 * Allocate GPADL id.
-// 	 */
-// 	gpadl = vmbus_gpadl_alloc(sc);
+	/*
+	 * Allocate GPADL id.
+	 */
+	gpadl = vmbus_gpadl_alloc(sc);
 
-// 	/*
-// 	 * Connect this GPADL to the target channel.
-// 	 *
-// 	 * NOTE:
-// 	 * Since each message can only hold small set of page
-// 	 * addresses, several messages may be required to
-// 	 * complete the connection.
-// 	 */
-// 	if (page_count > VMBUS_CHANMSG_GPADL_CONN_PGMAX)
-// 		cnt = VMBUS_CHANMSG_GPADL_CONN_PGMAX;
-// 	else
-// 		cnt = page_count;
-// 	page_count -= cnt;
+	/*
+	 * Connect this GPADL to the target channel.
+	 *
+	 * NOTE:
+	 * Since each message can only hold small set of page
+	 * addresses, several messages may be required to
+	 * complete the connection.
+	 */
+	if (page_count > VMBUS_CHANMSG_GPADL_CONN_PGMAX)
+		cnt = VMBUS_CHANMSG_GPADL_CONN_PGMAX;
+	else
+		cnt = page_count;
+	page_count -= cnt;
 
-// 	reqsz = __offsetof(struct vmbus_chanmsg_gpadl_conn,
-// 	    chm_range.gpa_page[cnt]);
-// 	mh = vmbus_msghc_get(sc, reqsz);
-// 	if (mh == NULL) {
-// 		vmbus_chan_printf(chan,
-// 		    "can not get msg hypercall for gpadl_conn(chan%u)\n",
-// 		    chan->ch_id);
-// 		return EIO;
-// 	}
+	// reqsz = __offsetof(struct vmbus_chanmsg_gpadl_conn,
+	//     chm_range.gpa_page[cnt]);
+	reqsz = __offsetof(struct vmbus_chanmsg_gpadl_conn,
+	    chm_range.page[cnt]);
+	mh = vmbus_msghc_get(sc, reqsz);
+	if (mh == NULL) {
+		vmbus_chan_printf(chan,
+		    "can not get msg hypercall for gpadl_conn(chan%u)\n",
+		    chan->ch_id);
+		return EIO;
+	}
 
-// 	req = vmbus_msghc_dataptr(mh);
-// 	req->chm_hdr.chm_type = VMBUS_CHANMSG_TYPE_GPADL_CONN;
-// 	req->chm_chanid = chan->ch_id;
-// 	req->chm_gpadl = gpadl;
-// 	req->chm_range_len = range_len;
-// 	req->chm_range_cnt = 1;
-// 	req->chm_range.gpa_len = size;
-// 	req->chm_range.gpa_ofs = 0;
-// 	for (i = 0; i < cnt; ++i)
-// 		req->chm_range.gpa_page[i] = page_id++;
+	req = vmbus_msghc_dataptr(mh);
+	req->chm_hdr.chm_type = VMBUS_CHANMSG_TYPE_GPADL_CONN;
+	req->chm_chanid = chan->ch_id;
+	req->chm_gpadl = gpadl;
+	req->chm_range_len = range_len;
+	req->chm_range_cnt = 1;
+	// req->chm_range.gpa_len = size;
+	// req->chm_range.gpa_ofs = 0;
+	req->chm_range.len = size;
+	req->chm_range.ofs = 0;
+	for (i = 0; i < cnt; ++i)
+		// req->chm_range.gpa_page[i] = page_id++;
+		req->chm_range.page[i] = page_id++;
+	
 
-// 	error = vmbus_msghc_exec(sc, mh);
-// 	if (error) {
-// 		vmbus_chan_printf(chan,
-// 		    "gpadl_conn(chan%u) msg hypercall exec failed: %d\n",
-// 		    chan->ch_id, error);
-// 		vmbus_msghc_put(sc, mh);
-// 		return error;
-// 	}
+	error = vmbus_msghc_exec(sc, mh);
+	if (error) {
+		vmbus_chan_printf(chan,
+		    "gpadl_conn(chan%u) msg hypercall exec failed: %d\n",
+		    chan->ch_id, error);
+		vmbus_msghc_put(sc, mh);
+		return error;
+	}
 
-// 	while (page_count > 0) {
-// 		struct vmbus_chanmsg_gpadl_subconn *subreq;
+	while (page_count > 0) {
+		struct vmbus_chanmsg_gpadl_subconn *subreq;
 
-// 		if (page_count > VMBUS_CHANMSG_GPADL_SUBCONN_PGMAX)
-// 			cnt = VMBUS_CHANMSG_GPADL_SUBCONN_PGMAX;
-// 		else
-// 			cnt = page_count;
-// 		page_count -= cnt;
+		if (page_count > VMBUS_CHANMSG_GPADL_SUBCONN_PGMAX)
+			cnt = VMBUS_CHANMSG_GPADL_SUBCONN_PGMAX;
+		else
+			cnt = page_count;
+		page_count -= cnt;
 
-// 		reqsz = __offsetof(struct vmbus_chanmsg_gpadl_subconn,
-// 		    chm_gpa_page[cnt]);
-// 		vmbus_msghc_reset(mh, reqsz);
+		reqsz = __offsetof(struct vmbus_chanmsg_gpadl_subconn,
+		    chm_gpa_page[cnt]);
+		vmbus_msghc_reset(mh, reqsz);
 
-// 		subreq = vmbus_msghc_dataptr(mh);
-// 		subreq->chm_hdr.chm_type = VMBUS_CHANMSG_TYPE_GPADL_SUBCONN;
-// 		subreq->chm_gpadl = gpadl;
-// 		for (i = 0; i < cnt; ++i)
-// 			subreq->chm_gpa_page[i] = page_id++;
+		subreq = vmbus_msghc_dataptr(mh);
+		subreq->chm_hdr.chm_type = VMBUS_CHANMSG_TYPE_GPADL_SUBCONN;
+		subreq->chm_gpadl = gpadl;
+		for (i = 0; i < cnt; ++i)
+			subreq->chm_gpa_page[i] = page_id++;
 
-// 		vmbus_msghc_exec_noresult(mh);
-// 	}
+		vmbus_msghc_exec_noresult(mh);
+	}
 // 	KASSERT(page_count == 0, ("invalid page count %d", page_count));
 
-// 	msg = vmbus_msghc_wait_result(sc, mh);
-// 	status = ((const struct vmbus_chanmsg_gpadl_connresp *)
-// 	    msg->msg_data)->chm_status;
+	msg = vmbus_msghc_wait_result(sc, mh);
+	status = ((const struct vmbus_chanmsg_gpadl_connresp *)
+	    msg->msg_data)->chm_status;
 
-// 	vmbus_msghc_put(sc, mh);
+	vmbus_msghc_put(sc, mh);
 
-// 	if (status != 0) {
-// 		vmbus_chan_printf(chan, "gpadl_conn(chan%u) failed: %u\n",
-// 		    chan->ch_id, status);
-// 		return EIO;
-// 	}
+	if (status != 0) {
+		vmbus_chan_printf(chan, "gpadl_conn(chan%u) failed: %u\n",
+		    chan->ch_id, status);
+		return EIO;
+	}
 
-// 	/* Done; commit the GPADL id. */
-// 	*gpadl0 = gpadl;
-// 	if (bootverbose) {
-// 		vmbus_chan_printf(chan, "gpadl_conn(chan%u) succeeded\n",
-// 		    chan->ch_id);
-// 	}
-// 	return 0;
-// }
+	/* Done; commit the GPADL id. */
+	*gpadl0 = gpadl;
+	if (bootverbose) {
+		vmbus_chan_printf(chan, "gpadl_conn(chan%u) succeeded\n",
+		    chan->ch_id);
+	}
+	return 0;
+}
 
 // static bool
 // vmbus_chan_wait_revoke(const struct vmbus_channel *chan, bool can_sleep)
@@ -1214,47 +1221,47 @@ vmbus_chan_send_sglist(struct vmbus_channel *chan,
 // 	return error;
 // }
 
-// int
-// vmbus_chan_recv(struct vmbus_channel *chan, void *data, int *dlen0,
-//     uint64_t *xactid)
-// {
-// 	struct vmbus_chanpkt_hdr pkt;
-// 	int error, dlen, hlen;
+int
+vmbus_chan_recv(struct vmbus_channel *chan, void *data, int *dlen0,
+    uint64_t *xactid)
+{
+	struct vmbus_chanpkt_hdr pkt;
+	int error, dlen, hlen;
 
-// 	error = vmbus_rxbr_peek(&chan->ch_rxbr, &pkt, sizeof(pkt));
-// 	if (error)
-// 		return (error);
+	error = vmbus_rxbr_peek(&chan->ch_rxbr, &pkt, sizeof(pkt));
+	if (error)
+		return (error);
 
-// 	if (__predict_false(pkt.cph_hlen < VMBUS_CHANPKT_HLEN_MIN)) {
-// 		vmbus_chan_printf(chan, "invalid hlen %u\n", pkt.cph_hlen);
-// 		/* XXX this channel is dead actually. */
-// 		return (EIO);
-// 	}
-// 	if (__predict_false(pkt.cph_hlen > pkt.cph_tlen)) {
-// 		vmbus_chan_printf(chan, "invalid hlen %u and tlen %u\n",
-// 		    pkt.cph_hlen, pkt.cph_tlen);
-// 		/* XXX this channel is dead actually. */
-// 		return (EIO);
-// 	}
+	if (__predict_false(pkt.cph_hlen < VMBUS_CHANPKT_HLEN_MIN)) {
+		vmbus_chan_printf(chan, "invalid hlen %u\n", pkt.cph_hlen);
+		/* XXX this channel is dead actually. */
+		return (EIO);
+	}
+	if (__predict_false(pkt.cph_hlen > pkt.cph_tlen)) {
+		vmbus_chan_printf(chan, "invalid hlen %u and tlen %u\n",
+		    pkt.cph_hlen, pkt.cph_tlen);
+		/* XXX this channel is dead actually. */
+		return (EIO);
+	}
 
-// 	hlen = VMBUS_CHANPKT_GETLEN(pkt.cph_hlen);
-// 	dlen = VMBUS_CHANPKT_GETLEN(pkt.cph_tlen) - hlen;
+	hlen = VMBUS_CHANPKT_GETLEN(pkt.cph_hlen);
+	dlen = VMBUS_CHANPKT_GETLEN(pkt.cph_tlen) - hlen;
 
-// 	if (*dlen0 < dlen) {
-// 		/* Return the size of this packet's data. */
-// 		*dlen0 = dlen;
-// 		return (ENOBUFS);
-// 	}
+	if (*dlen0 < dlen) {
+		/* Return the size of this packet's data. */
+		*dlen0 = dlen;
+		return (ENOBUFS);
+	}
 
-// 	*xactid = pkt.cph_xactid;
-// 	*dlen0 = dlen;
+	*xactid = pkt.cph_xactid;
+	*dlen0 = dlen;
 
-// 	/* Skip packet header */
-// 	error = vmbus_rxbr_read(&chan->ch_rxbr, data, dlen, hlen);
-// 	KASSERT(!error, ("vmbus_rxbr_read failed"));
+	/* Skip packet header */
+	error = vmbus_rxbr_read(&chan->ch_rxbr, data, dlen, hlen);
+	KASSERT(!error, ("vmbus_rxbr_read failed"));
 
-// 	return (0);
-// }
+	return (0);
+}
 
 // int
 // vmbus_chan_recv_pkt(struct vmbus_channel *chan,
@@ -1663,6 +1670,8 @@ vmbus_chan_alloc(struct vmbus_softc *sc)
 {
 	struct vmbus_channel *chan;
 
+	uk_pr_info("[vmbus_chan_alloc] start");
+
 	// chan = malloc(sizeof(*chan), M_DEVBUF, M_WAITOK | M_ZERO);
     chan = uk_calloc(sc->a, 1, sizeof(*chan));
 
@@ -1917,6 +1926,9 @@ vmbus_chan_msgproc_choffer(struct vmbus_softc *sc,
 
 		chan->ch_montrig_mask =
 		    1 << (offer->chm_montrig % VMBUS_MONTRIG_LEN);
+		uk_pr_debug("[vmbus_chan_msgproc_choffer] ch_montrig: %d, ch_montrig_mask: %d\n",
+			chan->ch_montrig, 
+			chan->ch_montrig_mask);
 	}
 
 	if (offer->chm_chflags & VMBUS_CHAN_TLNPI_PROVIDER_OFFER) {
@@ -2324,12 +2336,12 @@ vmbus_chan_msgproc(struct vmbus_softc *sc, const struct vmbus_message *msg)
 // 	return (vmbus_txbr_empty(&chan->ch_txbr));
 // }
 
-// bool
-// vmbus_chan_rx_empty(const struct vmbus_channel *chan)
-// {
+bool
+vmbus_chan_rx_empty(const struct vmbus_channel *chan)
+{
 
-// 	return (vmbus_rxbr_empty(&chan->ch_rxbr));
-// }
+	return (vmbus_rxbr_empty(&chan->ch_rxbr));
+}
 
 static int
 vmbus_chan_printf(const struct vmbus_channel *chan, const char *fmt, ...)
@@ -2367,14 +2379,14 @@ vmbus_chan_printf(const struct vmbus_channel *chan, const char *fmt, ...)
 // 	return (chan->ch_mgmt_tq);
 // }
 
-// bool
-// vmbus_chan_is_revoked(const struct vmbus_channel *chan)
-// {
+bool
+vmbus_chan_is_revoked(const struct vmbus_channel *chan)
+{
 
-// 	if (chan->ch_stflags & VMBUS_CHAN_ST_REVOKED)
-// 		return (true);
-// 	return (false);
-// }
+	if (chan->ch_stflags & VMBUS_CHAN_ST_REVOKED)
+		return (true);
+	return (false);
+}
 
 // void
 // vmbus_chan_set_orphan(struct vmbus_channel *chan, struct vmbus_xact_ctx *xact)

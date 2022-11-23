@@ -4,21 +4,22 @@
  * All rights reserved.
  */
 
-#include <stdint.h>
-#include <string.h>
-#include <stdio.h>
-#include <errno.h>
-#include <unistd.h>
-#include <dirent.h>
+// #include <stdint.h>
+// #include <string.h>
+// #include <stdio.h>
+// #include <errno.h>
+// #include <unistd.h>
+// #include <dirent.h>
 // #include <net/if.h>
 // #include <net/if_arp.h>
 // #include <netinet/in.h>
-#include <sys/ioctl.h>
+// #include <sys/ioctl.h>
 
 #include <uk/alloc.h>
 #include <uk/netdev.h>
 #include <uk/netdev_core.h>
 #include <uk/netdev_driver.h>
+#include <uk/plat/io.h>
 
 // #include "hn_logs.h"
 #include "hn_var.h"
@@ -1098,20 +1099,20 @@ hn_dev_start(struct uk_netdev *dev)
 /*
  * Setup connection between PMD and kernel.
  */
-//static int
-//hn_attach(struct hn_data *hv, unsigned int mtu)
-//{
-//	int error;
+static int
+hn_attach(struct hn_data *hv, unsigned int mtu)
+{
+	int error;
 
-//	/* Attach NVS */
-//	error = hn_nvs_attach(hv, mtu);
-//	if (error)
-//		goto failed_nvs;
+	/* Attach NVS */
+	error = hn_nvs_attach(hv, mtu);
+	if (error)
+		goto failed_nvs;
 
-//	/* Attach RNDIS */
-//	error = hn_rndis_attach(hv);
-//	if (error)
-//		goto failed_rndis;
+	/* Attach RNDIS */
+	error = hn_rndis_attach(hv);
+	if (error)
+		goto failed_rndis;
 
 	/*
 	 * NOTE:
@@ -1119,13 +1120,13 @@ hn_dev_start(struct uk_netdev *dev)
 	 * the RNDIS rxfilter is _not_ zero on the hypervisor side
 	 * after the successful RNDIS initialization.
 	 */
-//	hn_rndis_set_rxfilter(hv, NDIS_PACKET_TYPE_NONE);
-//	return 0;
-//failed_rndis:
-//	hn_nvs_detach(hv);
-//failed_nvs:
-//	return error;
-//}
+	hn_rndis_set_rxfilter(hv, NDIS_PACKET_TYPE_NONE);
+	return 0;
+failed_rndis:
+	hn_nvs_detach(hv);
+failed_nvs:
+	return error;
+}
 
 // static void
 // hn_detach(struct hn_data *hv)
@@ -1134,8 +1135,10 @@ hn_dev_start(struct uk_netdev *dev)
 // 	hn_rndis_detach(hv);
 // }
 
+// static int
+// eth_hn_dev_init(struct rte_eth_dev *eth_dev)
 static int
-eth_hn_dev_init(struct rte_eth_dev *eth_dev)
+eth_hn_dev_init(struct uk_netdev *eth_dev)
 {
 // 	struct hn_data *hv = eth_dev->data->dev_private;
 // 	struct rte_device *device = eth_dev->device;
@@ -1361,9 +1364,6 @@ failed:
 
 #define DRIVER_NAME  "netvsc"
 
-#define to_hn_dev(dev) \
-	__containerof(dev, struct hn_dev, netdev)
-
 static struct uk_alloc *drv_allocator;
 
 static int hn_rxtx_alloc(struct hn_dev *hndev,
@@ -1412,6 +1412,48 @@ err_free_txrx:
 	return rc;
 }
 
+static int
+hn_create_tx_data(struct hn_data *hv, int ring_cnt)
+{
+// 	int i;
+
+	/*
+	 * Create TXBUF for chimney sending.
+	 *
+	 * NOTE: It is shared by all channels.
+	 */
+// 	sc->hn_chim = hyperv_dmamem_alloc(bus_get_dma_tag(sc->hn_dev),
+// 	    PAGE_SIZE, 0, HN_CHIM_SIZE, &sc->hn_chim_dma,
+// 	    BUS_DMA_WAITOK | BUS_DMA_ZERO);
+// 	if (sc->hn_chim == NULL) {
+// 		device_printf(sc->hn_dev, "allocate txbuf failed\n");
+// 		return (ENOMEM);
+// 	}
+	hv->chim_res.addr = hyperv_mem_alloc(hv->a, HN_CHIM_SIZE);
+	if (hv->chim_res.addr == NULL) {
+	uk_pr_err("allocate txbuf failed\n");
+		return ENOMEM;
+	}
+	hv->chim_res.phys_addr = ukplat_virt_to_phys(hv->chim_res.addr);
+	hv->chim_res.len = HN_CHIM_SIZE;
+
+// 	sc->hn_tx_ring_cnt = ring_cnt;
+// 	sc->hn_tx_ring_inuse = sc->hn_tx_ring_cnt;
+
+// 	sc->hn_tx_ring = malloc(sizeof(struct hn_tx_ring) * sc->hn_tx_ring_cnt,
+// 	    M_DEVBUF, M_WAITOK | M_ZERO);
+
+// 	for (i = 0; i < sc->hn_tx_ring_cnt; ++i) {
+// 		int error;
+
+// 		error = hn_tx_ring_create(sc, i);
+// 		if (error)
+// 			return error;
+// 	}
+
+	return 0;
+}
+
 static struct uk_netdev_tx_queue *hn_dev_txq_setup(struct uk_netdev *n,
 		uint16_t queue_id,
 		uint16_t nb_desc __unused,
@@ -1419,6 +1461,7 @@ static struct uk_netdev_tx_queue *hn_dev_txq_setup(struct uk_netdev *n,
 {
 	int rc;
 	struct hn_dev *hndev;
+	struct hn_data *hv;
 	struct uk_netdev_tx_queue *txq;
 	// netif_tx_sring_t *sring;
 	// int err = -ENOMEM;
@@ -1428,6 +1471,8 @@ static struct uk_netdev_tx_queue *hn_dev_txq_setup(struct uk_netdev *n,
 	UK_ASSERT(n != NULL);
 
 	hndev = to_hn_dev(n);
+	hv = hndev->dev_private;
+
 	if (queue_id >= hndev->max_queue_pairs) {
 		uk_pr_err("Invalid queue identifier: %"__PRIu16"\n", queue_id);
 		return ERR2PTR(-EINVAL);
@@ -1437,48 +1482,34 @@ static struct uk_netdev_tx_queue *hn_dev_txq_setup(struct uk_netdev *n,
 	UK_ASSERT(!txq->initialized);
 	txq->hn_dev = hndev;
 	// TODO: Get the list of channels
-	txq->chan = hndev->channels[queue_id];
+	txq->chan = hv->channels[queue_id];
 	txq->lqueue_id = queue_id;
 
-	/* Setup shared ring */
-	//sring = uk_palloc(conf->a, 1);
-	//if (!sring)
-	//	return ERR2PTR(-ENOMEM);
-	//memset(sring, 0, PAGE_SIZE);
-	//SHARED_RING_INIT(sring);
-	//FRONT_RING_INIT(&txq->ring, sring, PAGE_SIZE);
-	//txq->ring_size = NET_TX_RING_SIZE;
-	// txq->ring_ref = gnttab_grant_access(nfdev->xendev->otherend_id,
-	// 	virt_to_mfn(sring), 0);
-	// UK_ASSERT(txq->ring_ref != GRANT_INVALID_REF);
+	// txq->txdesc_pool = rte_mempool_create(name, nb_desc,
+	// 				      sizeof(struct hn_txdesc),
+	// 				      0, 0, NULL, NULL,
+	// 				      hn_txd_init, txq,
+	// 				      dev->device->numa_node, 0);
+// 	txq->txdesc_pool = rte_mempool_create(name, nb_desc,
+// 					      sizeof(struct hn_txdesc),
+// 					      0, 0, NULL, NULL,
+// 					      hn_txd_init, txq,
+// 					      dev->device->numa_node, 0);
+	struct uk_netdev_info netdev_info;
+	uk_netdev_info_get(n, &netdev_info);
 
-	// /* Setup event channel */
-	// if (nfdev->split_evtchn || !nfdev->rxqs[queue_id].initialized) {
-	// 	rc = evtchn_alloc_unbound(nfdev->xendev->otherend_id,
-	// 			NULL, NULL,
-	// 			&txq->evtchn);
-	// 	if (rc) {
-	// 		uk_pr_err("Error creating event channel: %d\n", rc);
-	// 		gnttab_end_access(txq->ring_ref);
-	// 		uk_pfree(conf->a, sring, 1);
-	// 		return ERR2PTR(rc);
-	// 	}
-	// } else
-	// 	txq->evtchn = nfdev->rxqs[queue_id].evtchn;
+	txq->txdesc_pool = uk_allocpool_alloc(uk_alloc_get_default(), 1024, sizeof(struct hn_txdesc),
+                          netdev_info.ioalign);
+	if (txq->txdesc_pool == NULL) {
+// 		PMD_DRV_LOG(ERR,
+// 			    "mempool %s create failed: %d", name, rte_errno);
+		uk_pr_err("mempool %d create failed", queue_id);
+		goto error;
+	}
 
-	// /* Events are always disabled for tx queue */
-	// mask_evtchn(txq->evtchn);
-
-	// /* Initialize list of request ids */
-	// for (uint16_t i = 0; i < NET_TX_RING_SIZE; i++) {
-	// 	add_id_to_freelist(i, txq->freelist);
-	// 	txq->gref[i] = GRANT_INVALID_REF;
-	// 	txq->netbuf[i] = NULL;
-	// }
-
-	txq->agg_szmax  = MIN(hndev->hn_data.chim_szmax, hndev->hn_data.rndis_agg_size);
-	txq->agg_pktmax = hndev->hn_data.rndis_agg_pkts;
-	txq->agg_align  = hndev->hn_data.rndis_agg_align;
+	txq->agg_szmax  = MIN(hv->chim_szmax, hv->rndis_agg_size);
+	txq->agg_pktmax = hv->rndis_agg_pkts;
+	txq->agg_align  = hv->rndis_agg_align;
 
 	txq->initialized = true;
 	hndev->txqs_num++;
@@ -1486,6 +1517,8 @@ static struct uk_netdev_tx_queue *hn_dev_txq_setup(struct uk_netdev *n,
 	uk_pr_info("[hn_dev_txq_setup] end\n");
 
 	return txq;
+error:
+	return NULL;
 }
 
 static struct uk_netdev_rx_queue *hn_dev_rxq_setup(struct uk_netdev *n,
@@ -1558,6 +1591,8 @@ static struct uk_netdev_rx_queue *hn_dev_rxq_setup(struct uk_netdev *n,
 
 	// /* Allocate receive buffers for this queue */
 	// netfront_rx_fillup(rxq, rxq->ring_size);
+
+	uk_spin_init(&rxq->ring_lock);
 
 	rxq->initialized = true;
 	hndev->rxqs_num++;
@@ -1693,6 +1728,8 @@ static int hn_dev_configure(struct uk_netdev *n,
 		goto out;
 	}
 
+	hn_create_tx_data(hndev->dev_private, 1);
+
 out:
 	uk_pr_info("[hn_dev_configure] end\n");
 // 	return rc;
@@ -1817,12 +1854,82 @@ static const struct uk_netdev_ops hn_ops = {
 	.promiscuous_get = hn_dev_promisc_get,
 };
 
+#if 0
+static int
+hn_chan_attach(struct hn_data *hv, struct vmbus_channel *chan)
+{
+	struct vmbus_chan_br cbr;
+	struct hn_rx_ring *rxr;
+	struct hn_tx_ring *txr = NULL;
+	int idx, error;
+
+// 	idx = vmbus_chan_subidx(chan);
+
+	/*
+	 * Link this channel to RX/TX ring.
+	 */
+// 	KASSERT(idx >= 0 && idx < sc->hn_rx_ring_inuse,
+// 	    ("invalid channel index %d, should > 0 && < %d",
+// 	     idx, sc->hn_rx_ring_inuse));
+// 	rxr = &sc->hn_rx_ring[idx];
+// 	KASSERT((rxr->hn_rx_flags & HN_RX_FLAG_ATTACHED) == 0,
+// 	    ("RX ring %d already attached", idx));
+// 	rxr->hn_rx_flags |= HN_RX_FLAG_ATTACHED;
+// 	rxr->hn_chan = chan;
+
+// 	if (bootverbose) {
+// 		if_printf(sc->hn_ifp, "link RX ring %d to chan%u\n",
+// 		    idx, vmbus_chan_id(chan));
+// 	}
+
+// 	if (idx < sc->hn_tx_ring_inuse) {
+// 		txr = &sc->hn_tx_ring[idx];
+// 		KASSERT((txr->hn_tx_flags & HN_TX_FLAG_ATTACHED) == 0,
+// 		    ("TX ring %d already attached", idx));
+// 		txr->hn_tx_flags |= HN_TX_FLAG_ATTACHED;
+
+// 		txr->hn_chan = chan;
+// 		if (bootverbose) {
+// 			if_printf(sc->hn_ifp, "link TX ring %d to chan%u\n",
+// 			    idx, vmbus_chan_id(chan));
+// 		}
+// 	}
+
+// 	/* Bind this channel to a proper CPU. */
+// 	vmbus_chan_cpu_set(chan, HN_RING_IDX2CPU(sc, idx));
+
+	/*
+	 * Open this channel
+	 */
+	cbr.cbr = rxr->hn_br;
+// 	cbr.cbr_paddr = rxr->hn_br_dma.hv_paddr;
+	cbr.cbr_txsz = HN_TXBR_SIZE;
+	cbr.cbr_rxsz = HN_RXBR_SIZE;
+	error = vmbus_chan_open_br(chan, &cbr, NULL, 0, hn_chan_callback, rxr);
+// 	if (error) {
+// 		if (error == EISCONN) {
+// 			if_printf(sc->hn_ifp, "bufring is connected after "
+// 			    "chan%u open failure\n", vmbus_chan_id(chan));
+// 			rxr->hn_rx_flags |= HN_RX_FLAG_BR_REF;
+// 		} else {
+// 			if_printf(sc->hn_ifp, "open chan%u failed: %d\n",
+// 			    vmbus_chan_id(chan), error);
+// 		}
+// 	}
+	return (error);
+}
+#endif
+
 static int hn_drv_add_dev(struct vmbus_device *vmbusdev)
 {
 	uk_pr_info("[hn_drv_add_dev] enter\n");
 
 	struct hn_dev *hndev;
+	struct hn_data *hv;
 	int rc = 0;
+	int err = 0;
+
+	return err;
 
 	UK_ASSERT(vmbusdev != NULL);
 
@@ -1837,12 +1944,39 @@ static int hn_drv_add_dev(struct vmbus_device *vmbusdev)
 		goto err_out;
 	}
 
+	hndev->dev_private = uk_calloc(drv_allocator, 1, sizeof(struct hn_data));
+	if (!hndev->dev_private) {
+			uk_pr_info("[hn_drv_add_dev] error uk_alloc hn_data\n");
+		rc = -ENOMEM;
+		goto err_out;
+	}
+	hv = (struct hn_data *)hndev->dev_private;
+	hv->a = drv_allocator;
+
 	hndev->vmbusdev = vmbusdev;
 	hndev->mtu = UK_ETH_PAYLOAD_MAXLEN;
 	hndev->max_queue_pairs = 1;
 	hndev->netdev.tx_one = hn_xmit;
 	hndev->netdev.rx_one = hn_recv;
 	hndev->netdev.ops = &hn_ops;
+
+	hv->channels[0] = (struct vmbus_channel *)vmbusdev->priv;
+
+	hn_chan_attach(hv, hv->channels[0]);
+
+	err = hn_attach(hndev, RTE_ETHER_MTU);
+	if  (err)
+		goto failed;
+
+	err = hn_chim_init(hndev);
+	if (err)
+		goto failed;
+
+	//	err = hn_rndis_get_eaddr(hv, eth_dev->data->mac_addrs->addr_bytes);
+	//	if (err)
+	//		goto failed;
+
+
 	rc = uk_netdev_drv_register(&hndev->netdev, drv_allocator, DRIVER_NAME);
 	if (rc < 0) {
 		uk_pr_err("Failed to register %s device with libuknetdev\n",
@@ -1868,6 +2002,7 @@ out:
 	return rc;
 err_register:
 	uk_free(drv_allocator, hndev);
+failed:
 err_out:
 	goto out;
 }
