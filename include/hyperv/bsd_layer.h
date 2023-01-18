@@ -40,6 +40,7 @@ typedef unsigned long u_long;
 
 #define __aligned __align
 
+#define pause(wmesg, timo) uk_sched_thread_sleep(timo);
 
 #define mtx_sleep(wq, condition, lock, priority, msg, deadline) \
     uk_waitq_wait_event_deadline_locked(wq, condition, ukplat_monotonic_clock() + deadline, \
@@ -119,6 +120,59 @@ struct iovec { void *iov_base; size_t iov_len; };
 // #define atomic_fetchadd_int(src, val) 	__atomic_fetch_add(src, val, __ATOMIC_SEQ_CST)
 
 // Taken from freebsd-src/sys/amd64/include/atomic.h
+
+/*
+ * Atomic compare and set, used by the mutex functions.
+ *
+ * cmpset:
+ *	if (*dst == expect)
+ *		*dst = src
+ *
+ * fcmpset:
+ *	if (*dst == *expect)
+ *		*dst = src
+ *	else
+ *		*expect = *dst
+ *
+ * Returns 0 on failure, non-zero on success.
+ */
+#define	ATOMIC_CMPSET(TYPE)				\
+static __inline int					\
+atomic_cmpset_##TYPE(volatile u_##TYPE *dst, u_##TYPE expect, u_##TYPE src) \
+{							\
+	u_char res;					\
+							\
+	__asm __volatile(				\
+	" lock; cmpxchg %3,%1 ;	"			\
+	"# atomic_cmpset_" #TYPE "	"		\
+	: "=@cce" (res),		/* 0 */		\
+	  "+m" (*dst),			/* 1 */		\
+	  "+a" (expect)			/* 2 */		\
+	: "r" (src)			/* 3 */		\
+	: "memory", "cc");				\
+	return (res);					\
+}							\
+							\
+static __inline int					\
+atomic_fcmpset_##TYPE(volatile u_##TYPE *dst, u_##TYPE *expect, u_##TYPE src) \
+{							\
+	u_char res;					\
+							\
+	__asm __volatile(				\
+	" lock; cmpxchg %3,%1 ;		"		\
+	"# atomic_fcmpset_" #TYPE "	"		\
+	: "=@cce" (res),		/* 0 */		\
+	  "+m" (*dst),			/* 1 */		\
+	  "+a" (*expect)		/* 2 */		\
+	: "r" (src)			/* 3 */		\
+	: "memory", "cc");				\
+	return (res);					\
+}
+
+ATOMIC_CMPSET(char);
+ATOMIC_CMPSET(short);
+ATOMIC_CMPSET(int);
+ATOMIC_CMPSET(long);
 
 /*
  * Atomically add the value of v to the integer pointed to by p and return

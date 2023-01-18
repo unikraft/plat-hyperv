@@ -55,7 +55,7 @@ struct vmbus_channel {
 	struct vmbus_rxbr		ch_rxbr;
 
 	//struct taskqueue		*ch_tq;
-	//struct uk_thread		*ch_task;
+	struct uk_thread    *ch_thread;
 	struct task			ch_task;
 	struct task			ch_poll_task;
 	sbintime_t			ch_poll_intvl;

@@ -59,9 +59,7 @@ struct vmbus_xact_ctx {
 	 */
 	uint32_t			xc_flags;	/* VMBUS_XACT_CTXF_ */
 	struct vmbus_xact		*xc_free;
-	struct uk_waitq         xc_free_wq;
 	struct vmbus_xact		*xc_active;
-	struct uk_waitq         xc_active_wq;
 	struct vmbus_xact		*xc_orphan;
 };
 
@@ -136,7 +134,7 @@ vmbus_xact_get1(struct vmbus_xact_ctx *ctx, uint32_t dtor_flag)
 
 	while ((ctx->xc_flags & dtor_flag) == 0 && ctx->xc_free == NULL)
 		// mtx_sleep(&ctx->xc_free, &ctx->xc_lock, 0, "gxact", 0);
-		mtx_sleep(&ctx->xc_free_wq, (ctx->xc_flags & dtor_flag) == 0 && ctx->xc_free == NULL, &ctx->xc_lock, 0, "gxact", 0);
+		mtx_sleep(&ctx->xc_free->x_wq, (ctx->xc_flags & dtor_flag) == 0 && ctx->xc_free == NULL, &ctx->xc_lock, 0, "gxact", 0);
 	if (ctx->xc_flags & dtor_flag) {
 		/* Being destroyed */
 		xact = NULL;
@@ -185,25 +183,25 @@ vmbus_xact_ctx_create(struct uk_alloc *a, size_t req_size, size_t resp_size,
 bool
 vmbus_xact_ctx_orphan(struct vmbus_xact_ctx *ctx)
 {
-	// uk_pr_info("vmbus_xact_ctx_orphan start\n");
+	uk_pr_info("[vmbus_xact_ctx_orphan] ctx: %p, start\n", ctx);
 
 	mtx_lock(&ctx->xc_lock);
 	if (ctx->xc_flags & VMBUS_XACT_CTXF_DESTROY) {
 		mtx_unlock(&ctx->xc_lock);
-		// uk_pr_info("vmbus_xact_ctx_orphan end (return false)\n");
+		uk_pr_info("[vmbus_xact_ctx_orphan] ctx: %p, end (return false)\n", ctx);
 		return (false);
 	}
 	ctx->xc_flags |= VMBUS_XACT_CTXF_DESTROY;
 	mtx_unlock(&ctx->xc_lock);
 
-	wakeup(&ctx->xc_free_wq);
-	wakeup(&ctx->xc_active_wq);
+	wakeup(&ctx->xc_free->x_wq);
+	wakeup(&ctx->xc_active->x_wq);
 
 	ctx->xc_orphan = vmbus_xact_get1(ctx, 0);
 	if (ctx->xc_orphan == NULL)
 		panic("can't get xact");
 
-	// uk_pr_info("vmbus_xact_ctx_orphan end (return true)\n");
+	uk_pr_info("[vmbus_xact_ctx_orphan] ctx: %p, end (return true)\n", ctx);
 
 	return (true);
 }
@@ -249,7 +247,7 @@ vmbus_xact_put(struct vmbus_xact *xact)
 {
 	struct vmbus_xact_ctx *ctx = xact->x_ctx;
 
-	// uk_pr_info("vmbus_xact_put start\n");
+	uk_pr_info("[vmbus_xact_put] ctx: %p, start\n", ctx);
 
 	KASSERT(ctx->xc_active == NULL, ("pending active xact"));
 	xact->x_resp = NULL;
@@ -260,9 +258,9 @@ vmbus_xact_put(struct vmbus_xact *xact)
 	ctx->xc_free = xact;
 	// mtx_unlock(&ctx->xc_lock);
 	uk_mutex_unlock(&ctx->xc_lock);
-	wakeup(&ctx->xc_free_wq);
+	wakeup(&ctx->xc_free->x_wq);
 
-	// uk_pr_info("vmbus_xact_put end\n");
+	uk_pr_info("[vmbus_xact_put] ctx: %p, end\n", ctx);
 }
 
 void *
@@ -319,7 +317,7 @@ vmbus_xact_deactivate(struct vmbus_xact *xact)
 	ctx->xc_active = NULL;
 	mtx_unlock(&ctx->xc_lock);
 
-	// uk_pr_info("vmbus_xact_return end\n");
+	// uk_pr_info("vmbus_xact_deactivate end\n");
 }
 
 static const void *
@@ -328,7 +326,7 @@ vmbus_xact_return(struct vmbus_xact *xact, size_t *resp_len)
 	struct vmbus_xact_ctx *ctx = xact->x_ctx;
 	const void *resp;
 
-	// uk_pr_info("vmbus_xact_return start\n");
+	uk_pr_info("[vmbus_xact_return] ctx: %p start\n", ctx);
 
 	//mtx_assert(&ctx->xc_lock, MA_OWNED);
 	KASSERT(ctx->xc_active == xact, ("xact trashed"));
@@ -350,7 +348,7 @@ vmbus_xact_return(struct vmbus_xact *xact, size_t *resp_len)
 	resp = xact->x_resp;
 	*resp_len = xact->x_resp_len;
 
-	// uk_pr_info("vmbus_xact_return end\n");
+	uk_pr_info("[vmbus_xact_return] ctx: %p end\n", ctx);
 
 	return (resp);
 }
@@ -362,22 +360,26 @@ vmbus_xact_wait1(struct vmbus_xact *xact, size_t *resp_len,
 	struct vmbus_xact_ctx *ctx = xact->x_ctx;
 	const void *resp;
 
-	// uk_pr_info("[vmbus_xact_wait1] start\n");
+	uk_pr_info("[vmbus_xact_wait1] ctx: %p, start\n", ctx);
 
 	mtx_lock(&ctx->xc_lock);
 
+	uk_pr_info("[vmbus_xact_wait1] ctx: %p, ctx->xc_flags: %u\n", ctx, ctx->xc_flags);
+	uk_pr_info("[vmbus_xact_wait1] ctx->xc_active: %p, ctx->xc_active->x_wq: %p\n", ctx->xc_active, &ctx->xc_active->x_wq);
+	uk_pr_info("[vmbus_xact_wait1] thread: %p\n", uk_thread_current());
 	KASSERT(ctx->xc_active == xact, ("xact mismatch"));
 	while (xact->x_resp == NULL &&
 	    (ctx->xc_flags & VMBUS_XACT_CTXF_DESTROY) == 0) {
 		if (can_sleep) {
-			// uk_pr_info("[vmbus_xact_wait1] mtx_sleep xact->x_resp: %p, ctx->xc_flags: %u\n", xact->x_resp, ctx->xc_flags);
+			uk_pr_info("[vmbus_xact_wait1] ctx: %p, mtx_sleep xact->x_resp: %p, ctx->xc_flags: %u\n", ctx, xact->x_resp, ctx->xc_flags);
 // 			mtx_sleep(&ctx->xc_active, &ctx->xc_lock, 0,
 // 			    "wxact", 0);
 			mtx_sleep(&ctx->xc_active->x_wq, !(xact->x_resp == NULL &&
 	    		(ctx->xc_flags & VMBUS_XACT_CTXF_DESTROY) == 0), &ctx->xc_lock, 0,
 			    "wxact", 1000);
+			uk_pr_info("[vmbus_xact_wait1] ctx: %p woke up\n");
 		} else {
-			// uk_pr_info("[vmbus_xact_wait1] delay\n");
+			uk_pr_info("[vmbus_xact_wait1] ctx: %p, delay\n", ctx);
 			mtx_unlock(&ctx->xc_lock);
 			DELAY(1000);
 			mtx_lock(&ctx->xc_lock);
@@ -387,7 +389,7 @@ vmbus_xact_wait1(struct vmbus_xact *xact, size_t *resp_len,
 
 	mtx_unlock(&ctx->xc_lock);
 
-	// uk_pr_info("[vmbus_xact_wait1] end\n");
+	uk_pr_info("[vmbus_xact_wait1] ctx: %p, end\n", ctx);
 
 	return (resp);
 }
@@ -412,7 +414,7 @@ vmbus_xact_poll(struct vmbus_xact *xact, size_t *resp_len)
 	struct vmbus_xact_ctx *ctx = xact->x_ctx;
 	const void *resp;
 
-	// uk_pr_info("vmbus_xact_poll start\n");
+	uk_pr_info("[vmbus_xact_poll] ctx: %p start\n", ctx);
 
 	mtx_lock(&ctx->xc_lock);
 
@@ -427,7 +429,7 @@ vmbus_xact_poll(struct vmbus_xact *xact, size_t *resp_len)
 
 	mtx_unlock(&ctx->xc_lock);
 
-	// uk_pr_info("vmbus_xact_poll end\n");
+	uk_pr_info("[vmbus_xact_poll] ctx: %p end\n", ctx);
 
 	return (resp);
 }
@@ -438,7 +440,7 @@ vmbus_xact_save_resp(struct vmbus_xact *xact, const void *data, size_t dlen)
 	struct vmbus_xact_ctx *ctx = xact->x_ctx;
 	size_t cplen = dlen;
 
-	// uk_pr_info("vmbus_xact_save_resp start\n");
+	uk_pr_info("[vmbus_xact_save_resp] ctx: %p, start\n", ctx);
 
 	// mtx_assert(&ctx->xc_lock, MA_OWNED);
 
@@ -453,40 +455,44 @@ vmbus_xact_save_resp(struct vmbus_xact *xact, const void *data, size_t dlen)
 	xact->x_resp_len = cplen;
 	xact->x_resp = xact->x_resp0;
 
-	// uk_pr_info("vmbus_xact_save_resp end\n");
+	uk_pr_info("[vmbus_xact_save_resp] ctx: %p, end\n", ctx);
 }
 
-// void
-// vmbus_xact_wakeup(struct vmbus_xact *xact, const void *data, size_t dlen)
-// {
-// 	struct vmbus_xact_ctx *ctx = xact->x_ctx;
-// 	int do_wakeup = 0;
+void
+vmbus_xact_wakeup(struct vmbus_xact *xact, const void *data, size_t dlen)
+{
+	struct vmbus_xact_ctx *ctx = xact->x_ctx;
+	int do_wakeup = 0;
 
-// 	mtx_lock(&ctx->xc_lock);
-// 	/*
-// 	 * NOTE:
-// 	 * xc_active could be NULL, if the ctx has been orphaned.
-// 	 */
-// 	if (ctx->xc_active != NULL) {
-// 		vmbus_xact_save_resp(xact, data, dlen);
-// 		do_wakeup = 1;
-// 	} else {
-// 		KASSERT(ctx->xc_flags & VMBUS_XACT_CTXF_DESTROY,
-// 		    ("no active xact pending"));
-// 		printf("vmbus: drop xact response\n");
-// 	}
-// 	mtx_unlock(&ctx->xc_lock);
+	uk_pr_info("[vmbus_xact_wakeup] ctx: %p, start\n", ctx);
 
-// 	if (do_wakeup)
-// 		wakeup(&ctx->xc_active);
-// }
+	mtx_lock(&ctx->xc_lock);
+	/*
+	 * NOTE:
+	 * xc_active could be NULL, if the ctx has been orphaned.
+	 */
+	if (ctx->xc_active != NULL) {
+		vmbus_xact_save_resp(xact, data, dlen);
+		do_wakeup = 1;
+	} else {
+		KASSERT(ctx->xc_flags & VMBUS_XACT_CTXF_DESTROY,
+		    ("no active xact pending"));
+		printf("vmbus: drop xact response\n");
+	}
+	mtx_unlock(&ctx->xc_lock);
+
+	if (do_wakeup)
+		wakeup(&ctx->xc_active);
+	
+	uk_pr_info("[vmbus_xact_wakeup] ctx: %p, end\n", ctx);
+}
 
 void
 vmbus_xact_ctx_wakeup(struct vmbus_xact_ctx *ctx, const void *data, size_t dlen)
 {
 	int do_wakeup = 0;
 
-	// uk_pr_info("[vmbus_xact_ctx_wakeup] start\n");
+	uk_pr_info("[vmbus_xact_ctx_wakeup] ctx: %p, start\n", ctx);
 
 	mtx_lock(&ctx->xc_lock);
 	/*
@@ -503,8 +509,10 @@ vmbus_xact_ctx_wakeup(struct vmbus_xact_ctx *ctx, const void *data, size_t dlen)
 	}
 	mtx_unlock(&ctx->xc_lock);
 
-	if (do_wakeup)
-		wakeup(&ctx->xc_active_wq);
+	if (do_wakeup) {
+		uk_pr_info("[vmbus_xact_ctx_wakeup] wakeup ctx->xc_active: %p, ctx->xc_active->x_wq: %p\n", ctx->xc_active, &ctx->xc_active->x_wq);
+		wakeup(&ctx->xc_active->x_wq);
+	}
 
-	// uk_pr_info("vmbus_xact_ctx_wakeup end\n");	
+	uk_pr_info("[vmbus_xact_ctx_wakeup] ctx: %p, end\n", ctx);
 }

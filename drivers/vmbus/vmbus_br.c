@@ -135,18 +135,23 @@ static __inline uint32_t
 vmbus_rxbr_avail(const struct vmbus_rxbr *rbr)
 {
 	uint32_t rindex, windex;
+	uint32_t sz;
 
 	/* Get snapshot */
 	rindex = rbr->rxbr_rindex;
 	windex = rbr->rxbr_windex;
 
-	return (rbr->rxbr_dsize -
+	sz = (rbr->rxbr_dsize -
 	    VMBUS_BR_WAVAIL(rindex, windex, rbr->rxbr_dsize));
+
+	uk_pr_info("[vmbus_rxbr_avail] rbr->rxbr_dsize: %u, rindex: %u, windex: %u, sz: %u\n", rbr->rxbr_dsize, rindex, windex, sz);
+
+	return sz;
 }
 
 uint32_t
 vmbus_rxbr_available(const struct vmbus_rxbr *rbr)
-{
+{	
 	return (vmbus_rxbr_avail(rbr));
 }
 
@@ -278,7 +283,7 @@ vmbus_txbr_need_signal(const struct vmbus_txbr *tbr, uint32_t old_windex)
 	if (tbr->txbr_imask)
 		return (FALSE);
 
-	// __compiler_membar();
+	__compiler_membar();
 
 	/*
 	 * This is the only case we need to signal when the
@@ -294,10 +299,15 @@ static __inline uint32_t
 vmbus_txbr_avail(const struct vmbus_txbr *tbr)
 {
 	uint32_t rindex, windex;
+	uint32_t sz;
 
 	/* Get snapshot */
 	rindex = tbr->txbr_rindex;
 	windex = tbr->txbr_windex;
+
+	sz = VMBUS_BR_WAVAIL(rindex, windex, tbr->txbr_dsize);
+
+	uk_pr_info("[vmbus_txbr_avail] tbr->txbr_dsize: %u, rindex: %u, windex: %u, sz: %u\n", tbr->txbr_dsize, rindex, windex, sz);
 
 	return VMBUS_BR_WAVAIL(rindex, windex, tbr->txbr_dsize);
 }
@@ -382,7 +392,7 @@ vmbus_txbr_write_call(struct vmbus_txbr *tbr,
 	 * the bufring is empty.
 	 */
 	if (vmbus_txbr_avail(tbr) <= total) {
-		return (EAGAIN);
+		return -(EAGAIN);
 	}
 
 	/* Save br_windex for later use */
@@ -421,7 +431,7 @@ vmbus_txbr_write_call(struct vmbus_txbr *tbr,
 	 * Update the write index _after_ the channel packet
 	 * is copied.
 	 */
-	// __compiler_membar();
+	__compiler_membar();
 	tbr->txbr_windex = windex;
 
 	mtx_unlock_spin(&tbr->txbr_lock);
@@ -462,7 +472,7 @@ vmbus_txbr_write(struct vmbus_txbr *tbr, const struct iovec iov[], int iovlen,
 	 */
 	if (vmbus_txbr_avail(tbr) <= total) {
 		mtx_unlock_spin(&tbr->txbr_lock);
-		return (EAGAIN);
+		return -(EAGAIN);
 	}
 
 	/* Save br_windex for later use */
@@ -488,7 +498,7 @@ vmbus_txbr_write(struct vmbus_txbr *tbr, const struct iovec iov[], int iovlen,
 	 * Update the write index _after_ the channel packet
 	 * is copied.
 	 */
-	// __compiler_membar();
+	__compiler_membar();
 	tbr->txbr_windex = windex;
 
 	mtx_unlock_spin(&tbr->txbr_lock);
@@ -550,7 +560,8 @@ vmbus_rxbr_peek(struct vmbus_rxbr *rbr, void *data, int dlen)
 	 */
 	if (vmbus_rxbr_avail(rbr) < dlen + sizeof(uint64_t)) {
 		mtx_unlock_spin(&rbr->rxbr_lock);
-		return (EAGAIN);
+		uk_pr_info("[vmbus_rxbr_peek] end return EAGAIN\n");
+		return -(EAGAIN);
 	}
 	vmbus_rxbr_copyfrom(rbr, rbr->rxbr_rindex, data, dlen);
 
@@ -606,7 +617,7 @@ vmbus_rxbr_idxadv_peek(struct vmbus_rxbr *rbr, void *data, int dlen,
 	 */
 	if (vmbus_rxbr_avail(rbr) < idx_adv + sizeof(uint64_t) + dlen) {
 		mtx_unlock_spin(&rbr->rxbr_lock);
-		return (EAGAIN);
+		return -(EAGAIN);
 	}
 
 	if (idx_adv > 0) {
@@ -616,7 +627,7 @@ vmbus_rxbr_idxadv_peek(struct vmbus_rxbr *rbr, void *data, int dlen,
 		 */
 		rindex = VMBUS_BR_IDXINC(rbr->rxbr_rindex,
 		    idx_adv + sizeof(uint64_t), br_dsize);
-		// __compiler_membar();
+		__compiler_membar();
 		rbr->rxbr_rindex = rindex;
 	}
 
@@ -652,7 +663,7 @@ vmbus_rxbr_idxadv(struct vmbus_rxbr *rbr, uint32_t idx_adv,
 	 */
 	if (vmbus_rxbr_avail(rbr) < idx_adv + sizeof(uint64_t)) {
 		mtx_unlock_spin(&rbr->rxbr_lock);
-		return (EAGAIN);
+		return -(EAGAIN);
 	}
 
 	/*
@@ -661,7 +672,7 @@ vmbus_rxbr_idxadv(struct vmbus_rxbr *rbr, uint32_t idx_adv,
 	 */
 	rindex = VMBUS_BR_IDXINC(rbr->rxbr_rindex,
 	    idx_adv + sizeof(uint64_t), br_dsize);
-	// __compiler_membar();
+	__compiler_membar();
 	rbr->rxbr_rindex = rindex;
 
 	mtx_unlock_spin(&rbr->rxbr_lock);
@@ -689,7 +700,7 @@ vmbus_rxbr_read(struct vmbus_rxbr *rbr, void *data, int dlen, uint32_t skip)
 
 	if (vmbus_rxbr_avail(rbr) < dlen + skip + sizeof(uint64_t)) {
 		mtx_unlock_spin(&rbr->rxbr_lock);
-		return (EAGAIN);
+		return -(EAGAIN);
 	}
 
 	/*
@@ -706,7 +717,7 @@ vmbus_rxbr_read(struct vmbus_rxbr *rbr, void *data, int dlen, uint32_t skip)
 	/*
 	 * Update the read index _after_ the channel packet is fetched.
 	 */
-	// __compiler_membar();
+	 __compiler_membar();
 	rbr->rxbr_rindex = rindex;
 
 	mtx_unlock_spin(&rbr->rxbr_lock);

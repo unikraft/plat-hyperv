@@ -248,7 +248,7 @@ vmbus_msghc_get(struct vmbus_softc *sc, size_t dsize)
 	struct vmbus_msghc *mh;
 	struct vmbus_xact *xact;
 
-	uk_pr_info("vmbus_msghc_get start\n");
+	// uk_pr_info("vmbus_msghc_get start\n");
 
 	if (dsize > HYPERCALL_POSTMSGIN_DSIZE_MAX)
 		panic("invalid data size %zu", dsize);
@@ -262,16 +262,16 @@ vmbus_msghc_get(struct vmbus_softc *sc, size_t dsize)
 	mh->mh_xact = xact;
 
 	vmbus_msghc_reset(mh, dsize);
-	uk_pr_info("vmbus_msghc_get end\n");
+	// uk_pr_info("vmbus_msghc_get end\n");
 	return (mh);
 }
 
 void
 vmbus_msghc_put(struct vmbus_softc *sc __unused, struct vmbus_msghc *mh)
 {
-	uk_pr_info("vmbus_msghc_put start\n");
+	// uk_pr_info("vmbus_msghc_put start\n");
 	vmbus_xact_put(mh->mh_xact);
-	uk_pr_info("vmbus_msghc_put end\n");
+	// uk_pr_info("vmbus_msghc_put end\n");
 }
 
 void *
@@ -279,9 +279,9 @@ vmbus_msghc_dataptr(struct vmbus_msghc *mh)
 {
 	struct hypercall_postmsg_in *inprm;
 
-	uk_pr_info("vmbus_msghc_dataptr start\n");
+	// uk_pr_info("vmbus_msghc_dataptr start\n");
 	inprm = vmbus_xact_req_data(mh->mh_xact);
-	uk_pr_info("vmbus_msghc_dataptr end\n");
+	// uk_pr_info("vmbus_msghc_dataptr end\n");
 	return (inprm->hc_data);
 }
 
@@ -295,11 +295,11 @@ vmbus_msghc_exec_noresult(struct vmbus_msghc *mh)
 	bus_addr_t inprm_paddr;
 	int ii;
 
-	uk_pr_info("vmbus_msghc_exec_no_result\n");
+	uk_pr_info("vmbus_msghc_exec_noresult\n");
 
 	inprm = vmbus_xact_req_data(mh->mh_xact);
 	inprm_paddr = vmbus_xact_req_paddr(mh->mh_xact);
-	uk_pr_info("vmbus_msghc_exec_no_result inprm: %p, inprm_paddr: %lx\n", inprm, inprm_paddr);
+	uk_pr_info("vmbus_msghc_exec_noresult inprm: %p, inprm_paddr: %lx\n", inprm, inprm_paddr);
 
 	/*
 	 * Save the input parameter so that we could restore the input
@@ -339,7 +339,7 @@ vmbus_msghc_exec_noresult(struct vmbus_msghc *mh)
 
 #undef HC_RETRY_MAX
 
-	uk_pr_info("vmbus_msghc_exec_no_result error: EIO\n");
+	uk_pr_info("vmbus_msghc_exec_noresult error: EIO\n");
  
 	return EIO;
 }
@@ -349,12 +349,12 @@ vmbus_msghc_exec(struct vmbus_softc *sc __unused, struct vmbus_msghc *mh)
 {
 	int error;
 
-	uk_pr_info("vmbus_msghc_exec start\n");
+	// uk_pr_info("vmbus_msghc_exec start\n");
 	vmbus_xact_activate(mh->mh_xact);
 	error = vmbus_msghc_exec_noresult(mh);
 	if (error)
 		vmbus_xact_deactivate(mh->mh_xact);
-	uk_pr_info("vmbus_msghc_exec end\n");
+	// uk_pr_info("vmbus_msghc_exec end\n");
 	return error;
 }
 
@@ -385,9 +385,9 @@ vmbus_msghc_poll_result(struct vmbus_softc *sc __unused, struct vmbus_msghc *mh)
 void
 vmbus_msghc_wakeup(struct vmbus_softc *sc, const struct vmbus_message *msg)
 {
-	uk_pr_info("[vmbus_msghc_wakeup] start\n");
+	uk_pr_info("[vmbus_msghc_wakeup] msg: %p start\n", msg);
 	vmbus_xact_ctx_wakeup(sc->vmbus_xc, msg, sizeof(*msg));
-	uk_pr_info("[vmbus_msghc_wakeup] end\n");
+	uk_pr_info("[vmbus_msghc_wakeup] msg: %p end\n", msg);
 }
 
 uint32_t
@@ -556,14 +556,14 @@ vmbus_scan_done_task(void *xsc)
 {
 	struct vmbus_softc *sc = xsc;
 
-	uk_pr_info("[vmbus_scan_done] start");
+	uk_pr_info("[vmbus_scan_done] start\n");
 
 	// bus_topo_lock();
 	sc->vmbus_scandone = true;
 	// bus_topo_unlock();
 	wakeup(&sc->vmbus_scandone_wq);
 
-	uk_pr_info("[vmbus_scan_done] end");
+	uk_pr_info("[vmbus_scan_done] end\n");
 }
 
 static void
@@ -692,9 +692,11 @@ vmbus_msg_task(void *xsc)
 	msg = VMBUS_PCPU_GET(sc, message, curcpu) + VMBUS_SINT_MESSAGE;
 	for (;;) { 
 		if (msg->msg_type == HYPERV_MSGTYPE_NONE) {
+			uk_pr_info("[vmbus_msg_task] HYPERV_MSGTYPE_NONE\n");
 			/* No message */
 			break;
 		} else if (msg->msg_type == HYPERV_MSGTYPE_CHANNEL) {
+			uk_pr_info("[vmbus_msg_task] HYPERV_MSGTYPE_CHANNEL\n");
 			/* Channel message */
 			vmbus_chanmsg_handle(sc,
 			    __DEVOLATILE(const struct vmbus_message *, msg));
@@ -718,6 +720,7 @@ vmbus_msg_task(void *xsc)
 			 * This will cause message queue rescan to possibly
 			 * deliver another msg from the hypervisor
 			 */
+			uk_pr_info("[vmbus_msg_task] message queue rescan\n");
 			wrmsrl(MSR_HV_EOM, 0);
 		}
 	}
@@ -767,7 +770,7 @@ vmbus_handle_intr1(struct vmbus_softc *sc, int cpu)
 			wrmsrl(MSR_HV_EOM, 0);
 		}
 	}
-	uk_pr_info("[vmbus_handle_intr] Before vmbus_event_proc sc->vmbus_event_proc: %p\n", sc->vmbus_event_proc);
+	uk_pr_info("[vmbus_handle_intr1] Before vmbus_event_proc sc->vmbus_event_proc: %p\n", sc->vmbus_event_proc);
 	/*
 	 * Check events.  Hot path for network and storage I/O data; high rate.
 	 *
@@ -777,12 +780,12 @@ vmbus_handle_intr1(struct vmbus_softc *sc, int cpu)
 	 */
 	sc->vmbus_event_proc(sc, cpu);
 
-	uk_pr_info("[vmbus_handle_intr] After vmbus_event_proc\n");
+	uk_pr_info("[vmbus_handle_intr1] After vmbus_event_proc\n");
 	/*
 	 * Check messages.  Mainly management stuffs; ultra low rate.
 	 */
 	msg = msg_base + VMBUS_SINT_MESSAGE;
-	uk_pr_info("[vmbus_handle_intr] msg: %p\n", msg);
+	uk_pr_info("[vmbus_handle_intr1] msg: %p, msg->msg_type: %d\n", msg, msg->msg_type);
 	if (__predict_false(msg->msg_type != HYPERV_MSGTYPE_NONE)) {
 		// taskqueue_enqueue(VMBUS_PCPU_GET(sc, message_tq, cpu),
 		//     VMBUS_PCPU_PTR(sc, message_task, cpu));
@@ -807,7 +810,7 @@ vmbus_handle_intr(void)
 {
 	struct vmbus_softc *sc = vmbus_get_softc();
 	int cpu = curcpu;
-	uk_pr_info("vmbus_handle_intr sc: %p, intr_cnt: %lu\n", sc, *(VMBUS_PCPU_GET(sc, intr_cnt, cpu)));
+	uk_pr_info("[vmbus_handle_intr] sc: %p, intr_cnt: %lu\n", sc, *(VMBUS_PCPU_GET(sc, intr_cnt, cpu)));
 // 	/*
 // 	 * Disable preemption.
 // 	 */
@@ -955,7 +958,7 @@ vmbus_page_alloc(struct vmbus_softc *sc)
 // 		ptr = hyperv_dmamem_alloc(parent_dtag, PAGE_SIZE, 0,
 // 		    PAGE_SIZE, VMBUS_PCPU_PTR(sc, event_flags_dma, cpu),
 // 		    BUS_DMA_WAITOK | BUS_DMA_ZERO);
-		VMBUS_PCPU_GET(sc, event_flags, cpu) = hyperv_mem_alloc(sc->a, PAGE_SIZE);
+		ptr = hyperv_mem_alloc(sc->a, PAGE_SIZE);
 		if (ptr == NULL)
 			return ENOMEM;
 		VMBUS_PCPU_GET(sc, event_flags, cpu) = ptr;
@@ -1163,7 +1166,7 @@ vmbus_add_child(struct vmbus_channel *chan)
 	struct vmbus_softc *sc = chan->ch_vmbus;
 	// device_t parent = sc->vmbus_dev;
 
-	uk_pr_info("vmbus_add_child start\n");
+	uk_pr_info("[vmbus_add_child] chid: %u start\n", chan->ch_id);
 
 	// bus_topo_lock();
 	// chan->ch_dev = device_add_child(parent, NULL, -1);
@@ -1179,7 +1182,8 @@ vmbus_add_child(struct vmbus_channel *chan)
 
 	vmbus_probe_device_type(chan);
 
-	uk_pr_info("vmbus_add_child end\n");
+	uk_pr_info("[vmbus_add_child] chid: %u end\n", chan->ch_id);
+
 	return (0);
 }
 
@@ -1929,7 +1933,7 @@ static int vmbus_probe_device(struct vmbus_driver *drv,
 	int err;
 	struct vmbus_device *dev;
 
-	uk_pr_info("[vmbus_probe_device] enter\n");
+	uk_pr_info("[vmbus_probe_device] start\n");
 
 	dev = uk_calloc(vbh.a, 1, sizeof(*dev));
 	if (!dev) {
@@ -1945,6 +1949,7 @@ static int vmbus_probe_device(struct vmbus_driver *drv,
 		uk_free(vbh.a, dev);
 	}
 
+	uk_pr_info("[vmbus_probe_device] end\n");
 	return err;
 }
 
@@ -1954,7 +1959,7 @@ static int vmbus_probe_device_type(struct vmbus_channel *chan)
 	char **devices = NULL;
 	int err = 0;
 
-	uk_pr_info("[vmbus_probe_device_type] enter");
+	uk_pr_info("[vmbus_probe_device_type] start\n");
 
 	drv = vmbus_find_driver(&chan->ch_guid_type);
 	if (!drv) {
@@ -1964,6 +1969,7 @@ static int vmbus_probe_device_type(struct vmbus_channel *chan)
 
 	err = vmbus_probe_device(drv, chan);
 
+	uk_pr_info("[vmbus_probe_device_type] end error: %d\n", err);
 	return err;
 }
 

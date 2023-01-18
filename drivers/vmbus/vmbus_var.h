@@ -80,10 +80,10 @@ struct vmbus_pcpu_data {
 	struct vmbus_evtflags	*event_flags;	/* event flags from host */
 	__paddr_t event_flags_paddr;
 
-// 	/* Rarely used fields */
-// 	struct taskqueue	*event_tq;	/* event taskq */
+	/* Rarely used fields */
+	// struct taskqueue	*event_tq;	/* event taskq */
 	struct uk_thread *event_thread;
-// 	struct taskqueue	*message_tq;	/* message taskq */
+	// struct taskqueue	*message_tq;	/* message taskq */
 	struct uk_thread *message_thread;
 
 	struct task		message_task;	/* message task */
@@ -128,9 +128,9 @@ struct vmbus_softc {
 	struct uk_waitq vmbus_scandone_wq;
 	struct task		vmbus_scandone_task;
 
-// 	struct taskqueue	*vmbus_devtq;	/* for dev attach/detach */
+	// struct taskqueue	*vmbus_devtq;	/* for dev attach/detach */
 	struct uk_thread *vmbus_subch_thread;
-// 	struct taskqueue	*vmbus_subchtq;	/* for sub-chan attach/detach */
+	// struct taskqueue	*vmbus_subchtq;	/* for sub-chan attach/detach */
 	struct uk_thread *vmbus_dev_thread;
 	/**< Waiting queue for notifying incoming xs replies */
 	struct uk_waitq waitq;
@@ -143,7 +143,7 @@ struct vmbus_softc {
 	struct mtx		vmbus_chan_lock;
 	TAILQ_HEAD(, struct vmbus_channel) vmbus_chans;
 
-// 	struct intr_config_hook	vmbus_intrhook;
+	// struct intr_config_hook	vmbus_intrhook;
 
 // #ifdef NEW_PCIB
 // 	/* The list of usable MMIO ranges for PCIe pass-through */
@@ -157,10 +157,10 @@ struct vmbus_softc {
 #define VMBUS_PCPU_GET(sc, field, cpu)	(sc)->vmbus_pcpu[(cpu)].field
 #define VMBUS_PCPU_PTR(sc, field, cpu)	&(sc)->vmbus_pcpu[(cpu)].field
 
-// struct vmbus_channel;
+struct vmbus_channel;
 struct trapframe;
-// struct vmbus_message;
-// struct vmbus_msghc;
+struct vmbus_message;
+struct vmbus_msghc;
 
 // void		vmbus_handle_intr(struct trapframe *);
 void		vmbus_handle_intr(void);

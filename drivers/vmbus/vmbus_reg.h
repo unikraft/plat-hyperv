@@ -293,13 +293,13 @@ struct vmbus_chanmsg_disconnect {
 	struct vmbus_chanmsg_hdr chm_hdr;
 } __packed;
 
-// /* VMBUS_CHANMSG_TYPE_TL_CONN */
-// /* Hyper-V socket guest connect request */
-// struct vmbus_chanmsg_tl_connect {
-// 	struct vmbus_chanmsg_hdr chm_hdr;
-// 	struct hyperv_guid guest_endpoint_id;
-// 	struct hyperv_guid host_service_id;
-// } __packed;
+/* VMBUS_CHANMSG_TYPE_TL_CONN */
+/* Hyper-V socket guest connect request */
+struct vmbus_chanmsg_tl_connect {
+	struct vmbus_chanmsg_hdr chm_hdr;
+	struct hyperv_guid guest_endpoint_id;
+	struct hyperv_guid host_service_id;
+} __packed;
 
 
 /* VMBUS_CHANMSG_TYPE_CHOPEN */
@@ -361,18 +361,18 @@ struct vmbus_chanmsg_gpadl_connresp {
 	uint32_t	chm_status;
 } __packed;
 
-// /* VMBUS_CHANMSG_TYPE_CHCLOSE */
-// struct vmbus_chanmsg_chclose {
-// 	struct vmbus_chanmsg_hdr chm_hdr;
-// 	uint32_t	chm_chanid;
-// } __packed;
+/* VMBUS_CHANMSG_TYPE_CHCLOSE */
+struct vmbus_chanmsg_chclose {
+	struct vmbus_chanmsg_hdr chm_hdr;
+	uint32_t	chm_chanid;
+} __packed;
 
-// /* VMBUS_CHANMSG_TYPE_GPADL_DISCONN */
-// struct vmbus_chanmsg_gpadl_disconn {
-// 	struct vmbus_chanmsg_hdr chm_hdr;
-// 	uint32_t	chm_chanid;
-// 	uint32_t	chm_gpadl;
-// } __packed;
+/* VMBUS_CHANMSG_TYPE_GPADL_DISCONN */
+struct vmbus_chanmsg_gpadl_disconn {
+	struct vmbus_chanmsg_hdr chm_hdr;
+	uint32_t	chm_chanid;
+	uint32_t	chm_gpadl;
+} __packed;
 
 /* VMBUS_CHANMSG_TYPE_CHFREE */
 struct vmbus_chanmsg_chfree {

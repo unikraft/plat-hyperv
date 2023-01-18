@@ -49,9 +49,9 @@ struct vmbus_chan_pollarg {
 	u_int			poll_hz;
 };
 
-// static void			vmbus_chan_update_evtflagcnt(
-// 				    struct vmbus_softc *,
-// 				    const struct vmbus_channel *);
+static void			vmbus_chan_update_evtflagcnt(
+				    struct vmbus_softc *,
+				    const struct vmbus_channel *);
 // static int			vmbus_chan_close_internal(
 // 				    struct vmbus_channel *);
 // static int			vmbus_chan_sysctl_mnf(SYSCTL_HANDLER_ARGS);
@@ -62,12 +62,12 @@ static void			vmbus_chan_free(struct vmbus_channel *);
 static int			vmbus_chan_add(struct vmbus_channel *);
 static void			vmbus_chan_cpu_default(struct vmbus_channel *);
 // static int			vmbus_chan_release(struct vmbus_channel *);
-// static void			vmbus_chan_set_chmap(struct vmbus_channel *);
-// static void			vmbus_chan_clear_chmap(struct vmbus_channel *);
+static void			vmbus_chan_set_chmap(struct vmbus_channel *);
+static void			vmbus_chan_clear_chmap(struct vmbus_channel *);
 static void			vmbus_chan_detach(struct vmbus_channel *);
 // static bool			vmbus_chan_wait_revoke(
 // 				    const struct vmbus_channel *, bool);
-// static void			vmbus_chan_poll_timeout(void *);
+static void			vmbus_chan_poll_timeout(void *);
 static bool			vmbus_chan_poll_cancel_intq(
 				    struct vmbus_channel *);
 // static void			vmbus_chan_poll_cancel(struct vmbus_channel *);
@@ -103,8 +103,9 @@ static void			vmbus_chan_msgproc_chrescind(
 				    struct vmbus_softc *,
 				    const struct vmbus_message *);
 
-static int			vmbus_chan_printf(const struct vmbus_channel *,
-				    const char *, ...) __printflike(2, 3);
+// static int			vmbus_chan_printf(const struct vmbus_channel *,
+// 				    const char *, ...) __printflike(2, 3);
+#define vmbus_chan_printf(chan, fmt, ...) uk_pr_info( "%p: " fmt, chan->ch_dev, ##__VA_ARGS__ )
 
 /*
  * Vmbus channel message processing.
@@ -326,51 +327,51 @@ vmbus_chan_rem_list(struct vmbus_softc *sc, struct vmbus_channel *chan)
 // 	}
 // }
 
-// int
-// vmbus_chan_open(struct vmbus_channel *chan, int txbr_size, int rxbr_size,
-//     const void *udata, int udlen, vmbus_chan_callback_t cb, void *cbarg)
-// {
-// 	struct vmbus_chan_br cbr;
-// 	int error;
+int
+vmbus_chan_open(struct vmbus_channel *chan, int txbr_size, int rxbr_size,
+    const void *udata, int udlen, vmbus_chan_callback_t cb, void *cbarg)
+{
+	struct vmbus_chan_br cbr;
+	int error;
 
-// 	/*
-// 	 * Allocate the TX+RX bufrings.
-// 	 */
+	/*
+	 * Allocate the TX+RX bufrings.
+	 */
 // 	KASSERT(chan->ch_bufring == NULL, ("bufrings are allocated"));
 // 	chan->ch_bufring = hyperv_dmamem_alloc(bus_get_dma_tag(chan->ch_dev),
 // 	    PAGE_SIZE, 0, txbr_size + rxbr_size, &chan->ch_bufring_dma,
 // 	    BUS_DMA_WAITOK);
 // 	if (chan->ch_bufring == NULL) {
 // 		vmbus_chan_printf(chan, "bufring allocation failed\n");
-// 		return (ENOMEM);
+// 		return -(ENOMEM);
 // 	}
 
-// 	cbr.cbr = chan->ch_bufring;
-// 	cbr.cbr_paddr = chan->ch_bufring_dma.hv_paddr;
-// 	cbr.cbr_txsz = txbr_size;
-// 	cbr.cbr_rxsz = rxbr_size;
+	cbr.cbr = chan->ch_bufring;
+	// cbr.cbr_paddr = chan->ch_bufring_dma.hv_paddr;
+	cbr.cbr_txsz = txbr_size;
+	cbr.cbr_rxsz = rxbr_size;
 
-// 	error = vmbus_chan_open_br(chan, &cbr, udata, udlen, cb, cbarg);
-// 	if (error) {
-// 		if (error == EISCONN) {
-// 			/*
-// 			 * XXX
-// 			 * The bufring GPADL is still connected; abandon
-// 			 * this bufring, instead of having mysterious
-// 			 * crash or trashed data later on.
-// 			 */
-// 			vmbus_chan_printf(chan, "chan%u bufring GPADL "
-// 			    "is still connected upon channel open error; "
-// 			    "leak %d bytes memory\n", chan->ch_id,
-// 			    txbr_size + rxbr_size);
-// 		} else {
-// 			hyperv_dmamem_free(&chan->ch_bufring_dma,
-// 			    chan->ch_bufring);
-// 		}
-// 		chan->ch_bufring = NULL;
-// 	}
-// 	return (error);
-// }
+	error = vmbus_chan_open_br(chan, &cbr, udata, udlen, cb, cbarg);
+	if (error) {
+		if (error == EISCONN) {
+			/*
+			 * XXX
+			 * The bufring GPADL is still connected; abandon
+			 * this bufring, instead of having mysterious
+			 * crash or trashed data later on.
+			 */
+			vmbus_chan_printf(chan, "chan%u bufring GPADL "
+			    "is still connected upon channel open error; "
+			    "leak %d bytes memory\n", chan->ch_id,
+			    txbr_size + rxbr_size);
+		} else {
+			// hyperv_dmamem_free(&chan->ch_bufring_dma,
+			//     chan->ch_bufring);
+		}
+		chan->ch_bufring = NULL;
+	}
+	return (error);
+}
 
 int
 vmbus_chan_open_br(struct vmbus_channel *chan, const struct vmbus_chan_br *cbr,
@@ -388,17 +389,22 @@ vmbus_chan_open_br(struct vmbus_channel *chan, const struct vmbus_chan_br *cbr,
 	if (udlen > VMBUS_CHANMSG_CHOPEN_UDATA_SIZE) {
 		vmbus_chan_printf(chan,
 		    "invalid udata len %d for chan%u\n", udlen, chan->ch_id);
-		return (EINVAL);
+		return -(EINVAL);
 	}
 
 	br = cbr->cbr;
 	txbr_size = cbr->cbr_txsz;
 	rxbr_size = cbr->cbr_rxsz;
-	KASSERT((txbr_size & PAGE_MASK) == 0,
+	uk_pr_debug("cbr: %p, cbr_paddr: %p\n", cbr->cbr, cbr->cbr_paddr);
+	uk_pr_debug("txbr_size: %#x, rxbr_size: %#x, PAGE_MASK: %#x, __PAGE_MASK: %#x\n", txbr_size, rxbr_size, (__PAGE_SIZE - 1));
+	uk_pr_debug("tbx_size & PAGE_MASK: %#x\n", txbr_size & (__PAGE_SIZE - 1));
+	uk_pr_debug("cbr->cbr_paddr: %#x\n", cbr->cbr_paddr);
+	uk_pr_debug("cbr->cbr_paddr & PAGE_MASK: %#x\n", cbr->cbr_paddr & (__PAGE_SIZE - 1));
+	KASSERT((txbr_size & (__PAGE_SIZE - 1)) == 0,
 	    ("send bufring size is not multiple page"));
-	KASSERT((rxbr_size & PAGE_MASK) == 0,
+	KASSERT((rxbr_size & (__PAGE_SIZE - 1)) == 0,
 	    ("recv bufring size is not multiple page"));
-	KASSERT((cbr->cbr_paddr & PAGE_MASK) == 0,
+	KASSERT((cbr->cbr_paddr & (__PAGE_SIZE - 1)) == 0,
 	    ("bufring is not page aligned"));
 
 	/*
@@ -406,29 +412,33 @@ vmbus_chan_open_br(struct vmbus_channel *chan, const struct vmbus_chan_br *cbr,
 	 */
 	memset(br, 0, txbr_size + rxbr_size);
 
-// 	if (atomic_testandset_int(&chan->ch_stflags,
-// 	    VMBUS_CHAN_ST_OPENED_SHIFT))
-// 		panic("double-open chan%u", chan->ch_id);
+	if (atomic_testandset_int(&chan->ch_stflags,
+	    VMBUS_CHAN_ST_OPENED_SHIFT))
+		panic("double-open chan%u", chan->ch_id);
 
 	chan->ch_cb = cb;
 	chan->ch_cbarg = cbarg;
 
-// 	vmbus_chan_update_evtflagcnt(sc, chan);
+	vmbus_chan_update_evtflagcnt(sc, chan);
 
 // 	chan->ch_tq = VMBUS_PCPU_GET(chan->ch_vmbus, event_tq, chan->ch_cpuid);
-// 	if (chan->ch_flags & VMBUS_CHAN_FLAG_BATCHREAD)
-// 		task_fn = vmbus_chan_task;
-// 	else
-// 		task_fn = vmbus_chan_task_nobatch;
-// 	TASK_INIT(&chan->ch_task, 0, task_fn, chan);
+	if (chan->ch_flags & VMBUS_CHAN_FLAG_BATCHREAD)
+		task_fn = vmbus_chan_task;
+	else
+		task_fn = vmbus_chan_task_nobatch;
+	TASK_INIT(&chan->ch_task, 0, task_fn, chan);
 
-// 	/* TX bufring comes first */
-// 	vmbus_txbr_setup(&chan->ch_txbr, br, txbr_size);
-// 	/* RX bufring immediately follows TX bufring */
-// 	vmbus_rxbr_setup(&chan->ch_rxbr, br + txbr_size, rxbr_size);
 
-// 	/* Create sysctl tree for this channel */
+	/* TX bufring comes first */
+	vmbus_txbr_setup(&chan->ch_txbr, br, txbr_size);
+	/* RX bufring immediately follows TX bufring */
+	vmbus_rxbr_setup(&chan->ch_rxbr, br + txbr_size, rxbr_size);
+
+	/* Create sysctl tree for this channel */
 // 	vmbus_chan_sysctl_create(chan);
+//	vmbus_chan_poll_disable(chan);
+
+	uk_pr_info("Before vmbus_chan_gpadl_connect: txbr: %p, rxbr: %p\n", chan->ch_txbr, chan->ch_rxbr);
 
 	/*
 	 * Connect the bufrings, both RX and TX, to this channel.
@@ -438,15 +448,19 @@ vmbus_chan_open_br(struct vmbus_channel *chan, const struct vmbus_chan_br *cbr,
 	if (error) {
 		vmbus_chan_printf(chan,
 		    "failed to connect bufring GPADL to chan%u\n", chan->ch_id);
+		uk_pr_info("failed to connect bufring GPADL to chan%u\n", chan->ch_id);
+
 		goto failed;
 	}
+	uk_pr_info("After vmbus_chan_gpadl_connect gpadl: %p\n", chan->ch_bufring_gpadl);
 
 	/*
 	 * Install this channel, before it is opened, but after everything
 	 * else has been setup.
 	 */
-	// vmbus_chan_set_chmap(chan);
+	vmbus_chan_set_chmap(chan);
 
+	/*
 	/*
 	 * Open channel w/ the bufring GPADL on the target CPU.
 	 */
@@ -477,9 +491,11 @@ vmbus_chan_open_br(struct vmbus_channel *chan, const struct vmbus_chan_br *cbr,
 		vmbus_msghc_put(sc, mh);
 		goto failed;
 	}
+	uk_pr_info("vmbus_msghc_exec VMBUS_CHANMSG_TYPE_CHOPEN OK\n");
 
 	for (;;) {
 		msg = vmbus_msghc_poll_result(sc, mh);
+		uk_pr_info("vmbus_msghc_poll_result msg: %p\n", msg);
 		if (msg != NULL)
 			break;
 		if (vmbus_chan_is_revoked(chan)) {
@@ -493,6 +509,7 @@ vmbus_chan_open_br(struct vmbus_channel *chan, const struct vmbus_chan_br *cbr,
 			vmbus_chan_printf(chan,
 			    "chan%u is revoked, when it is being opened\n",
 			    chan->ch_id);
+			uk_pr_info("vmbus_chan_is_revoked\n");
 
 			/*
 			 * XXX
@@ -504,16 +521,20 @@ vmbus_chan_open_br(struct vmbus_channel *chan, const struct vmbus_chan_br *cbr,
 #define REVOKE_LINGER	100
 			for (i = 0; i < REVOKE_LINGER; ++i) {
 				msg = vmbus_msghc_poll_result(sc, mh);
-				if (msg != NULL)
+				if (msg != NULL) {
+					uk_pr_info("vmbus_msghc_exec_cancel msg != NULL\n");
 					break;
-				// pause("rchopen", 1);
+				}
+				pause("rchopen", 1);
 			}
 #undef REVOKE_LINGER
-			if (msg == NULL)
+			if (msg == NULL) {
 				vmbus_msghc_exec_cancel(sc, mh);
+				uk_pr_info("vmbus_msghc_exec_cancel msg == NULL\n");
+			}
 			break;
 		}
-		// pause("chopen", 1);
+		pause("chopen", 1);
 	}
 	if (msg != NULL) {
 		status = ((const struct vmbus_chanmsg_chopen_resp *)
@@ -532,11 +553,11 @@ vmbus_chan_open_br(struct vmbus_channel *chan, const struct vmbus_chan_br *cbr,
 	}
 
 	vmbus_chan_printf(chan, "failed to open chan%u\n", chan->ch_id);
-	error = ENXIO;
+	error = -ENXIO;
 
 failed:
 // 	sysctl_ctx_free(&chan->ch_sysctl_ctx);
-// 	vmbus_chan_clear_chmap(chan);
+	vmbus_chan_clear_chmap(chan);
 	if (chan->ch_bufring_gpadl != 0) {
 		int error1;
 
@@ -551,7 +572,7 @@ failed:
 // 		}
 		chan->ch_bufring_gpadl = 0;
 	}
-// 	atomic_clear_int(&chan->ch_stflags, VMBUS_CHAN_ST_OPENED);
+	atomic_clear_int(&chan->ch_stflags, VMBUS_CHAN_ST_OPENED);
 	return (error);
 }
 
@@ -568,29 +589,35 @@ vmbus_chan_gpadl_connect(struct vmbus_channel *chan, bus_addr_t paddr,
 	int page_count, range_len, i, cnt, error;
 	uint64_t page_id;
 
-// 	KASSERT(*gpadl0 == 0, ("GPADL is not zero"));
+	KASSERT(*gpadl0 == 0, ("GPADL is not zero"));
+
 
 	/*
 	 * Preliminary checks.
 	 */
 
-// 	KASSERT((size & PAGE_MASK) == 0,
-// 	    ("invalid GPA size %d, not multiple page size", size));
+	KASSERT((size & (PAGE_SIZE - 1)) == 0,
+	    ("invalid GPA size %d, not multiple page size", size));
 	page_count = size >> PAGE_SHIFT;
 
-// 	KASSERT((paddr & PAGE_MASK) == 0,
-// 	    ("GPA is not page aligned %jx", (uintmax_t)paddr));
+	KASSERT((paddr & (PAGE_SIZE - 1)) == 0,
+	    ("GPA is not page aligned %jx", (uintmax_t)paddr));
 	page_id = paddr >> PAGE_SHIFT;
+
+	uk_pr_info("[vmbus_chan_gpadl_connect] chan%u size: %d, paddr: %p\n", chan->ch_id, size, paddr);
 
 	// range_len = __offsetof(struct vmbus_gpa_range, gpa_page[page_count]);
 	range_len = __offsetof(struct vmbus_gpa_range, page[page_count]);
+
+	uk_pr_info("[vmbus_chan_gpadl_connect] chan%u page_count: %d, page_id: %p, range_len: %d\n", chan->ch_id, page_count, page_id, range_len);
+
 	/*
 	 * We don't support multiple GPA ranges.
 	 */
 	if (range_len > UINT16_MAX) {
 		vmbus_chan_printf(chan, "GPA too large, %d pages\n",
 		    page_count);
-		return EOPNOTSUPP;
+		return -EOPNOTSUPP;
 	}
 
 	/*
@@ -611,7 +638,8 @@ vmbus_chan_gpadl_connect(struct vmbus_channel *chan, bus_addr_t paddr,
 	else
 		cnt = page_count;
 	page_count -= cnt;
-
+	uk_pr_info("[vmbus_chan_gpadl_connect] chan%u cnt: %d, page_count: %d\n", chan->ch_id, cnt, page_count);
+	
 	// reqsz = __offsetof(struct vmbus_chanmsg_gpadl_conn,
 	//     chm_range.gpa_page[cnt]);
 	reqsz = __offsetof(struct vmbus_chanmsg_gpadl_conn,
@@ -621,7 +649,7 @@ vmbus_chan_gpadl_connect(struct vmbus_channel *chan, bus_addr_t paddr,
 		vmbus_chan_printf(chan,
 		    "can not get msg hypercall for gpadl_conn(chan%u)\n",
 		    chan->ch_id);
-		return EIO;
+		return -EIO;
 	}
 
 	req = vmbus_msghc_dataptr(mh);
@@ -656,6 +684,7 @@ vmbus_chan_gpadl_connect(struct vmbus_channel *chan, bus_addr_t paddr,
 		else
 			cnt = page_count;
 		page_count -= cnt;
+		uk_pr_info("[vmbus_chan_gpadl_connect] chan%u cnt: %d, page_count: %d\n", chan->ch_id, cnt, page_count);
 
 		reqsz = __offsetof(struct vmbus_chanmsg_gpadl_subconn,
 		    chm_gpa_page[cnt]);
@@ -669,8 +698,9 @@ vmbus_chan_gpadl_connect(struct vmbus_channel *chan, bus_addr_t paddr,
 
 		vmbus_msghc_exec_noresult(mh);
 	}
-// 	KASSERT(page_count == 0, ("invalid page count %d", page_count));
-
+	KASSERT(page_count == 0, ("invalid page count %d", page_count));
+	uk_pr_info("[vmbus_chan_gpadl_connect] chan%u page_count: %d\n", chan->ch_id, page_count);
+	
 	msg = vmbus_msghc_wait_result(sc, mh);
 	status = ((const struct vmbus_chanmsg_gpadl_connresp *)
 	    msg->msg_data)->chm_status;
@@ -680,7 +710,7 @@ vmbus_chan_gpadl_connect(struct vmbus_channel *chan, bus_addr_t paddr,
 	if (status != 0) {
 		vmbus_chan_printf(chan, "gpadl_conn(chan%u) failed: %u\n",
 		    chan->ch_id, status);
-		return EIO;
+		return -EIO;
 	}
 
 	/* Done; commit the GPADL id. */
@@ -712,58 +742,58 @@ vmbus_chan_gpadl_connect(struct vmbus_channel *chan, bus_addr_t paddr,
 // #undef WAIT_COUNT
 // }
 
-// /*
-//  * Disconnect the GPA from the target channel
-//  */
-// int
-// vmbus_chan_gpadl_disconnect(struct vmbus_channel *chan, uint32_t gpadl)
-// {
-// 	struct vmbus_softc *sc = chan->ch_vmbus;
-// 	struct vmbus_msghc *mh;
-// 	struct vmbus_chanmsg_gpadl_disconn *req;
-// 	int error;
+/*
+ * Disconnect the GPA from the target channel
+ */
+int
+vmbus_chan_gpadl_disconnect(struct vmbus_channel *chan, uint32_t gpadl)
+{
+	struct vmbus_softc *sc = chan->ch_vmbus;
+	struct vmbus_msghc *mh;
+	struct vmbus_chanmsg_gpadl_disconn *req;
+	int error;
 
-// 	KASSERT(gpadl != 0, ("GPADL is zero"));
+	KASSERT(gpadl != 0, ("GPADL is zero"));
 
-// 	mh = vmbus_msghc_get(sc, sizeof(*req));
-// 	if (mh == NULL) {
-// 		vmbus_chan_printf(chan,
-// 		    "can not get msg hypercall for gpadl_disconn(chan%u)\n",
-// 		    chan->ch_id);
-// 		return (EBUSY);
-// 	}
+	mh = vmbus_msghc_get(sc, sizeof(*req));
+	if (mh == NULL) {
+		vmbus_chan_printf(chan,
+		    "can not get msg hypercall for gpadl_disconn(chan%u)\n",
+		    chan->ch_id);
+		return (EBUSY);
+	}
 
-// 	req = vmbus_msghc_dataptr(mh);
-// 	req->chm_hdr.chm_type = VMBUS_CHANMSG_TYPE_GPADL_DISCONN;
-// 	req->chm_chanid = chan->ch_id;
-// 	req->chm_gpadl = gpadl;
+	req = vmbus_msghc_dataptr(mh);
+	req->chm_hdr.chm_type = VMBUS_CHANMSG_TYPE_GPADL_DISCONN;
+	req->chm_chanid = chan->ch_id;
+	req->chm_gpadl = gpadl;
 
-// 	error = vmbus_msghc_exec(sc, mh);
-// 	if (error) {
-// 		vmbus_msghc_put(sc, mh);
+	error = vmbus_msghc_exec(sc, mh);
+	if (error) {
+		vmbus_msghc_put(sc, mh);
 
-// 		if (vmbus_chan_wait_revoke(chan, true)) {
-// 			/*
-// 			 * Error is benign; this channel is revoked,
-// 			 * so this GPADL will not be touched anymore.
-// 			 */
-// 			vmbus_chan_printf(chan,
-// 			    "gpadl_disconn(revoked chan%u) msg hypercall "
-// 			    "exec failed: %d\n", chan->ch_id, error);
-// 			return (0);
-// 		}
-// 		vmbus_chan_printf(chan,
-// 		    "gpadl_disconn(chan%u) msg hypercall exec failed: %d\n",
-// 		    chan->ch_id, error);
-// 		return (error);
-// 	}
+		// if (vmbus_chan_wait_revoke(chan, true)) {
+		// 	/*
+		// 	 * Error is benign; this channel is revoked,
+		// 	 * so this GPADL will not be touched anymore.
+		// 	 */
+		// 	vmbus_chan_printf(chan,
+		// 	    "gpadl_disconn(revoked chan%u) msg hypercall "
+		// 	    "exec failed: %d\n", chan->ch_id, error);
+		// 	return (0);
+		// }
+		vmbus_chan_printf(chan,
+		    "gpadl_disconn(chan%u) msg hypercall exec failed: %d\n",
+		    chan->ch_id, error);
+		return (error);
+	}
 
-// 	vmbus_msghc_wait_result(sc, mh);
-// 	/* Discard result; no useful information */
-// 	vmbus_msghc_put(sc, mh);
+	vmbus_msghc_wait_result(sc, mh);
+	/* Discard result; no useful information */
+	vmbus_msghc_put(sc, mh);
 
-// 	return (0);
-// }
+	return (0);
+}
 
 static void
 vmbus_chan_detach(struct vmbus_channel *chan)
@@ -801,21 +831,21 @@ vmbus_chan_clrchmap_task(void *xchan)
 	chan->ch_vmbus->vmbus_chmap[chan->ch_id] = NULL;
 }
 
-// static void
-// vmbus_chan_clear_chmap(struct vmbus_channel *chan)
-// {
-// 	struct task chmap_task;
+static void
+vmbus_chan_clear_chmap(struct vmbus_channel *chan)
+{
+	struct task chmap_task;
 
 // 	TASK_INIT(&chmap_task, 0, vmbus_chan_clrchmap_task, chan);
 // 	vmbus_chan_run_task(chan, &chmap_task);
-// }
+}
 
-// static void
-// vmbus_chan_set_chmap(struct vmbus_channel *chan)
-// {
-// 	__compiler_membar();
-// 	chan->ch_vmbus->vmbus_chmap[chan->ch_id] = chan;
-// }
+static void
+vmbus_chan_set_chmap(struct vmbus_channel *chan)
+{
+	__compiler_membar();
+	chan->ch_vmbus->vmbus_chmap[chan->ch_id] = chan;
+}
 
 // static void
 // vmbus_chan_poll_cancel_task(void *xchan, int pending __unused)
@@ -826,23 +856,23 @@ vmbus_chan_poll_cancel_task(void *xchan)
 	vmbus_chan_poll_cancel_intq(xchan);
 }
 
-// static void
-// vmbus_chan_poll_cancel(struct vmbus_channel *chan)
-// {
+static void
+vmbus_chan_poll_cancel(struct vmbus_channel *chan)
+{
 // 	struct task poll_cancel;
 
 // 	TASK_INIT(&poll_cancel, 0, vmbus_chan_poll_cancel_task, chan);
 // 	vmbus_chan_run_task(chan, &poll_cancel);
-// }
+}
 
-// static int
-// vmbus_chan_close_internal(struct vmbus_channel *chan)
-// {
-// 	struct vmbus_softc *sc = chan->ch_vmbus;
-// 	struct vmbus_msghc *mh;
-// 	struct vmbus_chanmsg_chclose *req;
+static int
+vmbus_chan_close_internal(struct vmbus_channel *chan)
+{
+	struct vmbus_softc *sc = chan->ch_vmbus;
+	struct vmbus_msghc *mh;
+	struct vmbus_chanmsg_chclose *req;
 // 	uint32_t old_stflags;
-// 	int error;
+	int error;
 
 // 	/*
 // 	 * NOTE:
@@ -870,92 +900,92 @@ vmbus_chan_poll_cancel_task(void *xchan)
 // 	 */
 // 	sysctl_ctx_free(&chan->ch_sysctl_ctx);
 
-// 	/*
-// 	 * Cancel polling, if it is enabled.
-// 	 */
-// 	vmbus_chan_poll_cancel(chan);
+	/*
+	 * Cancel polling, if it is enabled.
+	 */
+	vmbus_chan_poll_cancel(chan);
 
-// 	/*
-// 	 * NOTE:
-// 	 * Order is critical.  This channel _must_ be uninstalled first,
-// 	 * else the channel task may be enqueued by the IDT after it has
-// 	 * been drained.
-// 	 */
+	/*
+	 * NOTE:
+	 * Order is critical.  This channel _must_ be uninstalled first,
+	 * else the channel task may be enqueued by the IDT after it has
+	 * been drained.
+	 */
 // 	vmbus_chan_clear_chmap(chan);
 // 	taskqueue_drain(chan->ch_tq, &chan->ch_task);
 // 	chan->ch_tq = NULL;
 
-// 	/*
-// 	 * Close this channel.
-// 	 */
-// 	mh = vmbus_msghc_get(sc, sizeof(*req));
-// 	if (mh == NULL) {
-// 		vmbus_chan_printf(chan,
-// 		    "can not get msg hypercall for chclose(chan%u)\n",
-// 		    chan->ch_id);
-// 		error = ENXIO;
-// 		goto disconnect;
-// 	}
+	/*
+	 * Close this channel.
+	 */
+	mh = vmbus_msghc_get(sc, sizeof(*req));
+	if (mh == NULL) {
+		vmbus_chan_printf(chan,
+		    "can not get msg hypercall for chclose(chan%u)\n",
+		    chan->ch_id);
+		error = ENXIO;
+		goto disconnect;
+	}
 
-// 	req = vmbus_msghc_dataptr(mh);
-// 	req->chm_hdr.chm_type = VMBUS_CHANMSG_TYPE_CHCLOSE;
-// 	req->chm_chanid = chan->ch_id;
+	req = vmbus_msghc_dataptr(mh);
+	req->chm_hdr.chm_type = VMBUS_CHANMSG_TYPE_CHCLOSE;
+	req->chm_chanid = chan->ch_id;
 
-// 	error = vmbus_msghc_exec_noresult(mh);
-// 	vmbus_msghc_put(sc, mh);
+	error = vmbus_msghc_exec_noresult(mh);
+	vmbus_msghc_put(sc, mh);
 
-// 	if (error) {
-// 		vmbus_chan_printf(chan,
-// 		    "chclose(chan%u) msg hypercall exec failed: %d\n",
-// 		    chan->ch_id, error);
-// 		goto disconnect;
-// 	}
+	if (error) {
+		vmbus_chan_printf(chan,
+		    "chclose(chan%u) msg hypercall exec failed: %d\n",
+		    chan->ch_id, error);
+		goto disconnect;
+	}
 
-// 	if (bootverbose)
-// 		vmbus_chan_printf(chan, "chan%u closed\n", chan->ch_id);
+	if (bootverbose)
+		vmbus_chan_printf(chan, "chan%u closed\n", chan->ch_id);
 
-// disconnect:
-// 	/*
-// 	 * Disconnect the TX+RX bufrings from this channel.
-// 	 */
-// 	if (chan->ch_bufring_gpadl != 0) {
-// 		int error1;
+disconnect:
+	/*
+	 * Disconnect the TX+RX bufrings from this channel.
+	 */
+	if (chan->ch_bufring_gpadl != 0) {
+		int error1;
 
-// 		error1 = vmbus_chan_gpadl_disconnect(chan,
-// 		    chan->ch_bufring_gpadl);
-// 		if (error1) {
-// 			/*
-// 			 * XXX
-// 			 * The bufring GPADL is still connected; abandon
-// 			 * this bufring, instead of having mysterious
-// 			 * crash or trashed data later on.
-// 			 */
-// 			vmbus_chan_printf(chan, "chan%u bufring GPADL "
-// 			    "is still connected after close\n", chan->ch_id);
-// 			chan->ch_bufring = NULL;
-// 			/*
-// 			 * Give caller a hint that the bufring GPADL is
-// 			 * still connected.
-// 			 */
-// 			error = EISCONN;
-// 		}
-// 		chan->ch_bufring_gpadl = 0;
-// 	}
+		error1 = vmbus_chan_gpadl_disconnect(chan,
+		    chan->ch_bufring_gpadl);
+		if (error1) {
+			/*
+			 * XXX
+			 * The bufring GPADL is still connected; abandon
+			 * this bufring, instead of having mysterious
+			 * crash or trashed data later on.
+			 */
+			vmbus_chan_printf(chan, "chan%u bufring GPADL "
+			    "is still connected after close\n", chan->ch_id);
+			chan->ch_bufring = NULL;
+			/*
+			 * Give caller a hint that the bufring GPADL is
+			 * still connected.
+			 */
+			error = EISCONN;
+		}
+		chan->ch_bufring_gpadl = 0;
+	}
 
-// 	/*
-// 	 * Destroy the TX+RX bufrings.
-// 	 */
-// 	if (chan->ch_bufring != NULL) {
+	/*
+	 * Destroy the TX+RX bufrings.
+	 */
+	if (chan->ch_bufring != NULL) {
 // 		hyperv_dmamem_free(&chan->ch_bufring_dma, chan->ch_bufring);
-// 		chan->ch_bufring = NULL;
-// 	}
-// 	return (error);
-// }
+		chan->ch_bufring = NULL;
+	}
+	return (error);
+}
 
-// int
-// vmbus_chan_close_direct(struct vmbus_channel *chan)
-// {
-// 	int error;
+int
+vmbus_chan_close_direct(struct vmbus_channel *chan)
+{
+	int error;
 
 // #ifdef INVARIANTS
 // 	if (VMBUS_CHAN_ISPRIMARY(chan)) {
@@ -984,18 +1014,18 @@ vmbus_chan_poll_cancel_task(void *xchan)
 // 		 */
 // 		vmbus_chan_detach(chan);
 // 	}
-// 	return (error);
-// }
+	return (error);
+}
 
-// /*
-//  * Caller should make sure that all sub-channels have
-//  * been added to 'chan' and all to-be-closed channels
-//  * are not being opened.
-//  */
-// void
-// vmbus_chan_close(struct vmbus_channel *chan)
-// {
-// 	int subchan_cnt;
+/*
+ * Caller should make sure that all sub-channels have
+ * been added to 'chan' and all to-be-closed channels
+ * are not being opened.
+ */
+void
+vmbus_chan_close(struct vmbus_channel *chan)
+{
+	int subchan_cnt;
 
 // 	if (!VMBUS_CHAN_ISPRIMARY(chan)) {
 // 		/*
@@ -1005,11 +1035,11 @@ vmbus_chan_poll_cancel_task(void *xchan)
 // 		return;
 // 	}
 
-// 	/*
-// 	 * Close all sub-channels, if any.
-// 	 */
-// 	subchan_cnt = chan->ch_subchan_cnt;
-// 	if (subchan_cnt > 0) {
+	/*
+	 * Close all sub-channels, if any.
+	 */
+	subchan_cnt = chan->ch_subchan_cnt;
+	if (subchan_cnt > 0) {
 // 		struct vmbus_channel **subchan;
 // 		int i;
 
@@ -1024,11 +1054,11 @@ vmbus_chan_poll_cancel_task(void *xchan)
 // 			vmbus_chan_detach(subchan[i]);
 // 		}
 // 		vmbus_subchan_rel(subchan, subchan_cnt);
-// 	}
+	}
 
-// 	/* Then close the primary channel. */
-// 	vmbus_chan_close_internal(chan);
-// }
+	/* Then close the primary channel. */
+	vmbus_chan_close_internal(chan);
+}
 
 // void
 // vmbus_chan_intr_drain(struct vmbus_channel *chan)
@@ -1100,6 +1130,9 @@ vmbus_chan_send(struct vmbus_channel *chan, uint16_t type, uint16_t flags,
 	struct iovec iov[3];
 	boolean_t send_evt;
 
+	uk_pr_info("[vmbus_chan_send] chan: %p\n", chan);
+	uk_pr_info("[vmbus_chan_send] chan->ch_id: %d\n", chan->ch_id);
+
 	hlen = sizeof(pkt);
 	pktlen = hlen + dlen;
 	pad_pktlen = VMBUS_CHANPKT_TOTLEN(pktlen);
@@ -1146,6 +1179,8 @@ vmbus_chan_send_sglist(struct vmbus_channel *chan,
 	boolean_t send_evt;
 	uint64_t pad = 0;
 
+	uk_pr_info("vmbus_chan_send_sglist] begin\n");
+
 	hlen = __offsetof(struct vmbus_chanpkt_sglist, cp_gpa[sglen]);
 	pktlen = hlen + dlen;
 	pad_pktlen = VMBUS_CHANPKT_TOTLEN(pktlen);
@@ -1177,6 +1212,9 @@ vmbus_chan_send_sglist(struct vmbus_channel *chan,
 		*need_sig |= send_evt;
 	else if (error == 0 && send_evt)
 		vmbus_chan_signal_tx(chan);
+
+	uk_pr_info("vmbus_chan_send_sglist] end error: %d\n", error);
+	
 	return error;
 }
 
@@ -1231,17 +1269,18 @@ vmbus_chan_recv(struct vmbus_channel *chan, void *data, int *dlen0,
 	error = vmbus_rxbr_peek(&chan->ch_rxbr, &pkt, sizeof(pkt));
 	if (error)
 		return (error);
+	uk_pr_info("[vmbus_chan_recv] after vmbus_rxbr_peek error: %d\n", error);
 
 	if (__predict_false(pkt.cph_hlen < VMBUS_CHANPKT_HLEN_MIN)) {
 		vmbus_chan_printf(chan, "invalid hlen %u\n", pkt.cph_hlen);
 		/* XXX this channel is dead actually. */
-		return (EIO);
+		return -(EIO);
 	}
 	if (__predict_false(pkt.cph_hlen > pkt.cph_tlen)) {
 		vmbus_chan_printf(chan, "invalid hlen %u and tlen %u\n",
 		    pkt.cph_hlen, pkt.cph_tlen);
 		/* XXX this channel is dead actually. */
-		return (EIO);
+		return -(EIO);
 	}
 
 	hlen = VMBUS_CHANPKT_GETLEN(pkt.cph_hlen);
@@ -1250,7 +1289,7 @@ vmbus_chan_recv(struct vmbus_channel *chan, void *data, int *dlen0,
 	if (*dlen0 < dlen) {
 		/* Return the size of this packet's data. */
 		*dlen0 = dlen;
-		return (ENOBUFS);
+		return -(ENOBUFS);
 	}
 
 	*xactid = pkt.cph_xactid;
@@ -1277,20 +1316,20 @@ vmbus_chan_recv(struct vmbus_channel *chan, void *data, int *dlen0,
 // 	if (__predict_false(pkt->cph_hlen < VMBUS_CHANPKT_HLEN_MIN)) {
 // 		vmbus_chan_printf(chan, "invalid hlen %u\n", pkt->cph_hlen);
 // 		/* XXX this channel is dead actually. */
-// 		return (EIO);
+// 		return -(EIO);
 // 	}
 // 	if (__predict_false(pkt->cph_hlen > pkt->cph_tlen)) {
 // 		vmbus_chan_printf(chan, "invalid hlen %u and tlen %u\n",
 // 		    pkt->cph_hlen, pkt->cph_tlen);
 // 		/* XXX this channel is dead actually. */
-// 		return (EIO);
+// 		return -(EIO);
 // 	}
 
 // 	pktlen = VMBUS_CHANPKT_GETLEN(pkt->cph_tlen);
 // 	if (*pktlen0 < pktlen) {
 // 		/* Return the size of this packet. */
 // 		*pktlen0 = pktlen;
-// 		return (ENOBUFS);
+// 		return -(ENOBUFS);
 // 	}
 // 	*pktlen0 = pktlen;
 
@@ -1327,7 +1366,7 @@ vmbus_chan_recv(struct vmbus_channel *chan, void *data, int *dlen0,
 // 	boolean_t sig_event;
 
 // 	if (data == NULL || data_len <= 0)
-// 		return (EINVAL);
+// 		return -(EINVAL);
 
 // 	error = vmbus_rxbr_idxadv_peek(&chan->ch_rxbr,
 // 	    data, data_len, advance, &sig_event);
@@ -1350,7 +1389,7 @@ vmbus_chan_recv(struct vmbus_channel *chan, void *data, int *dlen0,
 // 	boolean_t sig_event;
 
 // 	if (advance == 0)
-// 		return (EINVAL);
+// 		return -(EINVAL);
 
 // 	error = vmbus_rxbr_idxadv(&chan->ch_rxbr, advance, &sig_event);
 
@@ -1371,7 +1410,7 @@ vmbus_chan_recv(struct vmbus_channel *chan, void *data, int *dlen0,
 //     uint32_t skip, vmbus_br_copy_callback_t cb, void *cbarg)
 // {
 // 	if (!chan || data_len <= 0 || cb == NULL)
-// 		return (EINVAL);
+// 		return -(EINVAL);
 
 // 	return (vmbus_rxbr_peek_call(&chan->ch_rxbr, data_len, skip,
 // 	    cb, cbarg));
@@ -1383,6 +1422,8 @@ vmbus_chan_task(void *xchan)
 	struct vmbus_channel *chan = xchan;
 	vmbus_chan_callback_t cb = chan->ch_cb;
 	void *cbarg = chan->ch_cbarg;
+
+	uk_pr_info("[vmbus_chan_task] chan->ch_id: %u start\n", chan->ch_id);
 
 	KASSERT(chan->ch_poll_intvl == 0,
 	    ("chan%u: interrupted in polling mode", chan->ch_id));
@@ -1411,6 +1452,8 @@ vmbus_chan_task(void *xchan)
 		}
 		vmbus_rxbr_intr_mask(&chan->ch_rxbr);
 	}
+
+	uk_pr_info("[vmbus_chan_task] chan->ch_id: %u end\n", chan->ch_id);
 }
 
 // static void
@@ -1420,9 +1463,13 @@ vmbus_chan_task_nobatch(void *xchan)
 {
 	struct vmbus_channel *chan = xchan;
 
+	uk_pr_info("[vmbus_chan_task_nobatch] chan->ch_id: %u start\n", chan->ch_id);
+
 	KASSERT(chan->ch_poll_intvl == 0,
 	    ("chan%u: interrupted in polling mode", chan->ch_id));
 	chan->ch_cb(chan, chan->ch_cbarg);
+
+	uk_pr_info("[vmbus_chan_task_nobatch] chan->ch_id: %u end\n", chan->ch_id);
 }
 
 static void
@@ -1500,7 +1547,7 @@ vmbus_chan_pollcfg_task(void *xarg)
 static bool
 vmbus_chan_poll_cancel_intq(struct vmbus_channel *chan)
 {
-	uk_pr_info("[vmbus_chan_poll_cancel_intq] start");
+	uk_pr_info("[vmbus_chan_poll_cancel_intq] start\n");
 	if (chan->ch_poll_intvl == 0) {
 		/* Not enabled. */
 		return (false);
@@ -1530,7 +1577,7 @@ vmbus_chan_poll_cancel_intq(struct vmbus_channel *chan)
 	 */
 	// taskqueue_cancel(chan->ch_tq, &chan->ch_poll_task, NULL);
 
-	uk_pr_info("[vmbus_chan_poll_cancel_intq] end");
+	uk_pr_info("[vmbus_chan_poll_cancel_intq] end\n");
 	/* Polling was enabled. */
 	return (true);
 }
@@ -1542,10 +1589,13 @@ vmbus_chan_polldis_task(void *xchan)
 {
 	struct vmbus_channel *chan = xchan;
 
-	if (!vmbus_chan_poll_cancel_intq(chan)) {
-		/* Already disabled; done. */
-		return;
-	}
+	uk_pr_info("[vmbus_chan_polldis_task] chan->ch_id: %u start\n", chan->ch_id);
+
+	// if (!vmbus_chan_poll_cancel_intq(chan)) {
+	// 	/* Already disabled; done. */
+	// 	uk_pr_info("[vmbus_chan_polldis_task] chan->ch_id already disabled\n", chan->ch_id);
+	// 	return;
+	// }
 
 	/*
 	 * Plug this channel back to the channel map and unmask
@@ -1560,6 +1610,11 @@ vmbus_chan_polldis_task(void *xchan)
 	 * interrupt races ISR.
 	 */
 	// taskqueue_enqueue(chan->ch_tq, &chan->ch_task);
+	// chan->ch_thread = uk_thread_create("ch_tq", chan->ch_task.ta_func, chan->ch_task.ta_context);
+	// if (PTRISERR(chan->ch_thread))
+	// 	uk_pr_info("[vmbus_chan_polldis_task] Error creating thread: %d\n", PTR2ERR(chan->ch_thread));
+
+	uk_pr_info("[vmbus_chan_polldis_task] chan->ch_id: %u end\n", chan->ch_id);
 }
 
 static __inline void
@@ -1581,23 +1636,30 @@ vmbus_event_flags_proc(struct vmbus_softc *sc, volatile u_long *event_flags,
 		flags = atomic_swap_long(&event_flags[f], 0);
 		chid_base = f << VMBUS_EVTFLAG_SHIFT;
 
+		uk_pr_info("[vmbus_event_flags_proc] f: %d, flags: %lu chid_base: %u\n", f, flags, chid_base);
 		// while ((chid_ofs = ffs(flags)) != 0) {
 		while ((chid_ofs = __builtin_ffs(flags)) != 0) {
 			struct vmbus_channel *chan;
-
+			uk_pr_info("[vmbus_event_flags_proc] chid_ofs: %d\n", chid_ofs);
 			--chid_ofs; /* NOTE: ffsl is 1-based */
 			flags &= ~(1UL << chid_ofs);
 
 			chan = sc->vmbus_chmap[chid_base + chid_ofs];
+			uk_pr_info("[vmbus_event_flags_proc] chan: %p\n", chan);
 			if (__predict_false(chan == NULL)) {
 				/* Channel is closed. */
 				continue;
 			}
 			__compiler_membar();
 
+			uk_pr_info("[vmbus_event_flags_proc] chan->ch_flags: %lu\n", chan->ch_flags);
 			if (chan->ch_flags & VMBUS_CHAN_FLAG_BATCHREAD)
 				vmbus_rxbr_intr_mask(&chan->ch_rxbr);
 			// taskqueue_enqueue(chan->ch_tq, &chan->ch_task);
+			// chan->ch_thread = uk_thread_create("vmbus_dev", chan->ch_task.ta_func, chan->ch_task.ta_context);
+			// if (PTRISERR(chan->ch_thread))
+			// 	uk_pr_info("[vmbus_scan_done] Error creating thread: %d\n", PTR2ERR(chan->ch_thread));
+			// uk_pr_info("[vmbus_event_flags_proc] created thread for ch_task\n");
 		}
 	}
 
@@ -1609,7 +1671,7 @@ vmbus_event_proc(struct vmbus_softc *sc, int cpu)
 {
 	struct vmbus_evtflags *eventf;
 
-	uk_pr_info("vmbus_event_proc start\n");
+	uk_pr_info("[vmbus_event_proc] start\n");
 
 	/*
 	 * On Host with Win8 or above, the event page can be checked directly
@@ -1619,7 +1681,7 @@ vmbus_event_proc(struct vmbus_softc *sc, int cpu)
 	vmbus_event_flags_proc(sc, eventf->evt_flags,
 	    VMBUS_PCPU_GET(sc, event_flags_cnt, cpu));
 
-	uk_pr_info("vmbus_event_proc end\n");
+	uk_pr_info("[vmbus_event_proc] end\n");
 }
 
 void
@@ -1627,7 +1689,7 @@ vmbus_event_proc_compat(struct vmbus_softc *sc, int cpu)
 {
 	struct vmbus_evtflags *eventf;
 
-	uk_pr_info("vmbus_event_proc_compat start\n");
+	uk_pr_info("[vmbus_event_proc_compat] start\n");
 
 	eventf = VMBUS_PCPU_GET(sc, event_flags, cpu) + VMBUS_SINT_MESSAGE;
 	if (atomic_testandclear_long(&eventf->evt_flags[0], 0)) {
@@ -1635,45 +1697,45 @@ vmbus_event_proc_compat(struct vmbus_softc *sc, int cpu)
 		    VMBUS_CHAN_MAX_COMPAT >> VMBUS_EVTFLAG_SHIFT);
 	}
 
-	uk_pr_info("vmbus_event_proc_compat end\n");
+	uk_pr_info("[vmbus_event_proc_compat] end\n");
 }
 
-// static void
-// vmbus_chan_update_evtflagcnt(struct vmbus_softc *sc,
-//     const struct vmbus_channel *chan)
-// {
-// 	volatile int *flag_cnt_ptr;
-// 	int flag_cnt;
+static void
+vmbus_chan_update_evtflagcnt(struct vmbus_softc *sc,
+    const struct vmbus_channel *chan)
+{
+	volatile int *flag_cnt_ptr;
+	int flag_cnt;
 
-// 	flag_cnt = (chan->ch_id / VMBUS_EVTFLAG_LEN) + 1;
-// 	flag_cnt_ptr = VMBUS_PCPU_PTR(sc, event_flags_cnt, chan->ch_cpuid);
+	flag_cnt = (chan->ch_id / VMBUS_EVTFLAG_LEN) + 1;
+	flag_cnt_ptr = VMBUS_PCPU_PTR(sc, event_flags_cnt, chan->ch_cpuid);
 
-// 	for (;;) {
-// 		int old_flag_cnt;
+	for (;;) {
+		int old_flag_cnt;
 
-// 		old_flag_cnt = *flag_cnt_ptr;
-// 		if (old_flag_cnt >= flag_cnt)
-// 			break;
-// 		if (atomic_cmpset_int(flag_cnt_ptr, old_flag_cnt, flag_cnt)) {
-// 			if (bootverbose) {
-// 				vmbus_chan_printf(chan,
-// 				    "chan%u update cpu%d flag_cnt to %d\n",
-// 				    chan->ch_id, chan->ch_cpuid, flag_cnt);
-// 			}
-// 			break;
-// 		}
-// 	}
-// }
+		old_flag_cnt = *flag_cnt_ptr;
+		if (old_flag_cnt >= flag_cnt)
+			break;
+		if (atomic_cmpset_int(flag_cnt_ptr, old_flag_cnt, flag_cnt)) {
+			if (bootverbose) {
+				vmbus_chan_printf(chan,
+				    "chan%u update cpu%d flag_cnt to %d\n",
+				    chan->ch_id, chan->ch_cpuid, flag_cnt);
+			}
+			break;
+		}
+	}
+}
 
 static struct vmbus_channel *
 vmbus_chan_alloc(struct vmbus_softc *sc)
 {
 	struct vmbus_channel *chan;
 
-	uk_pr_info("[vmbus_chan_alloc] start");
-
 	// chan = malloc(sizeof(*chan), M_DEVBUF, M_WAITOK | M_ZERO);
     chan = uk_calloc(sc->a, 1, sizeof(*chan));
+
+	uk_pr_info("[vmbus_chan_alloc] chan: %p start\n", chan);
 
 	// chan->ch_monprm = hyperv_dmamem_alloc(bus_get_dma_tag(sc->vmbus_dev),
 	//     HYPERCALL_PARAM_ALIGN, 0, sizeof(struct hyperv_mon_param),
@@ -1699,6 +1761,7 @@ vmbus_chan_alloc(struct vmbus_softc *sc)
 	
 	uk_waitq_init(&chan->wq);
 
+	uk_pr_info("[vmbus_chan_alloc] chan: %p end\n", chan);
 	return chan;
 }
 
@@ -1741,11 +1804,11 @@ vmbus_chan_add(struct vmbus_channel *newchan)
 		 * skip it.
 		 */
 		device_printf(sc->vmbus_dev, "got chan0 offer, discard\n");
-		return EINVAL;
+		return -EINVAL;
 	} else if (newchan->ch_id >= VMBUS_CHAN_MAX) {
 		device_printf(sc->vmbus_dev, "invalid chan%u offer\n",
 		    newchan->ch_id);
-		return EINVAL;
+		return -EINVAL;
 	}
 
 	mtx_lock(&sc->vmbus_prichan_lock);
@@ -1770,14 +1833,14 @@ vmbus_chan_add(struct vmbus_channel *newchan)
 			mtx_unlock(&sc->vmbus_prichan_lock);
 			device_printf(sc->vmbus_dev,
 			    "duplicated primary chan%u\n", newchan->ch_id);
-			return EINVAL;
+			return -EINVAL;
 		}
 	} else { /* Sub-channel */
 		if (prichan == NULL) {
 			mtx_unlock(&sc->vmbus_prichan_lock);
 			device_printf(sc->vmbus_dev,
 			    "no primary chan for chan%u\n", newchan->ch_id);
-			return EINVAL;
+			return -EINVAL;
 		}
 		/*
 		 * Found the primary channel for this sub-channel and
@@ -1888,8 +1951,9 @@ vmbus_chan_msgproc_choffer(struct vmbus_softc *sc,
 
 	int error;
 
-	uk_pr_info("[vmbus_chan_msgproc_choffer] start\n");
 	offer = (const struct vmbus_chanmsg_choffer *)msg->msg_data;
+
+	uk_pr_info("[vmbus_chan_msgproc_choffer] chid: %u start\n", offer->chm_chanid);
 
 	chan = vmbus_chan_alloc(sc);
 	if (chan == NULL) {
@@ -1988,7 +2052,7 @@ vmbus_chan_msgproc_choffer(struct vmbus_softc *sc,
 	if (PTRISERR(VMBUS_PCPU_GET(sc, message_thread, curcpu)))
 		uk_pr_info("[vmbus_chan_msgproc_choffer] error creating uk_thread: %d\n", PTR2ERR(VMBUS_PCPU_GET(sc, message_thread, curcpu)));
 	
-	uk_pr_info("[vmbus_chan_msgproc_choffer] end\n");
+	uk_pr_info("[vmbus_chan_msgproc_choffer] chid: %u end\n", offer->chm_chanid);
 }
 
 static void
@@ -2071,7 +2135,7 @@ vmbus_chan_release(struct vmbus_channel *chan)
 		vmbus_chan_printf(chan,
 		    "can not get msg hypercall for chfree(chan%u)\n",
 		    chan->ch_id);
-		return (ENXIO);
+		return -(ENXIO);
 	}
 
 	req = vmbus_msghc_dataptr(mh);
@@ -2266,11 +2330,11 @@ vmbus_chan_msgproc(struct vmbus_softc *sc, const struct vmbus_message *msg)
 // 		chan->ch_flags |= VMBUS_CHAN_FLAG_BATCHREAD;
 // }
 
-// uint32_t
-// vmbus_chan_id(const struct vmbus_channel *chan)
-// {
-// 	return chan->ch_id;
-// }
+uint32_t
+vmbus_chan_id(const struct vmbus_channel *chan)
+{
+	return chan->ch_id;
+}
 
 // uint32_t
 // vmbus_chan_subidx(const struct vmbus_channel *chan)
@@ -2278,14 +2342,14 @@ vmbus_chan_msgproc(struct vmbus_softc *sc, const struct vmbus_message *msg)
 // 	return chan->ch_subidx;
 // }
 
-// bool
-// vmbus_chan_is_primary(const struct vmbus_channel *chan)
-// {
-// 	if (VMBUS_CHAN_ISPRIMARY(chan))
-// 		return true;
-// 	else
-// 		return false;
-// }
+bool
+vmbus_chan_is_primary(const struct vmbus_channel *chan)
+{
+	if (VMBUS_CHAN_ISPRIMARY(chan))
+		return true;
+	else
+		return false;
+}
 
 // bool
 // vmbus_chan_is_hvs(const struct vmbus_channel *chan)
@@ -2329,12 +2393,12 @@ vmbus_chan_msgproc(struct vmbus_softc *sc, const struct vmbus_message *msg)
 // 	return (vmbus_br_nelem(br_size, elem_size));
 // }
 
-// bool
-// vmbus_chan_tx_empty(const struct vmbus_channel *chan)
-// {
+bool
+vmbus_chan_tx_empty(const struct vmbus_channel *chan)
+{
 
-// 	return (vmbus_txbr_empty(&chan->ch_txbr));
-// }
+	return (vmbus_txbr_empty(&chan->ch_txbr));
+}
 
 bool
 vmbus_chan_rx_empty(const struct vmbus_channel *chan)
@@ -2343,13 +2407,13 @@ vmbus_chan_rx_empty(const struct vmbus_channel *chan)
 	return (vmbus_rxbr_empty(&chan->ch_rxbr));
 }
 
-static int
-vmbus_chan_printf(const struct vmbus_channel *chan, const char *fmt, ...)
-{
-	va_list ap;
-	device_t dev;
-	// int retval;
-	int retval = 0;
+// static int
+// vmbus_chan_printf(const struct vmbus_channel *chan, const char *fmt, ...)
+// {
+// 	va_list ap;
+// 	device_t dev;
+// 	// int retval;
+// 	int retval = 0;
 
 	// if (chan->ch_dev == NULL || !device_is_alive(chan->ch_dev))
 	// 	dev = chan->ch_vmbus->vmbus_dev;
@@ -2361,16 +2425,17 @@ vmbus_chan_printf(const struct vmbus_channel *chan, const char *fmt, ...)
 	// retval += vprintf(fmt, ap);
 	// va_end(ap);
 
-	return (retval);
-}
-
-// void
-// vmbus_chan_run_task(struct vmbus_channel *chan, struct task *task)
-// {
-
-// 	taskqueue_enqueue(chan->ch_tq, task);
-// 	taskqueue_drain(chan->ch_tq, task);
+// 	return (retval);
 // }
+
+void
+vmbus_chan_run_task(struct vmbus_channel *chan, struct task *task)
+{
+
+	//taskqueue_enqueue(chan->ch_tq, task);
+	//taskqueue_drain(chan->ch_tq, task);
+	task->ta_func(task->ta_context);
+}
 
 // struct taskqueue *
 // vmbus_chan_mgmt_tq(const struct vmbus_channel *chan)
@@ -2457,14 +2522,15 @@ vmbus_chan_is_revoked(const struct vmbus_channel *chan)
 // 	vmbus_chan_run_task(chan, &poll_cfg);
 // }
 
-// void
-// vmbus_chan_poll_disable(struct vmbus_channel *chan)
-// {
-// 	struct task poll_dis;
+void
+vmbus_chan_poll_disable(struct vmbus_channel *chan)
+{
+	struct task poll_dis;
+	uk_pr_info("[vmbus_chan_poll_disable] chan->ch_id: %u\n", chan->ch_id);
 
-// 	KASSERT(chan->ch_flags & VMBUS_CHAN_FLAG_BATCHREAD,
-// 	    ("disable polling on non-batch chan%u", chan->ch_id));
+	KASSERT(chan->ch_flags & VMBUS_CHAN_FLAG_BATCHREAD,
+	    ("disable polling on non-batch chan%u", chan->ch_id));
 
-// 	TASK_INIT(&poll_dis, 0, vmbus_chan_polldis_task, chan);
-// 	vmbus_chan_run_task(chan, &poll_dis);
-// }
+	TASK_INIT(&poll_dis, 0, vmbus_chan_polldis_task, chan);
+	vmbus_chan_run_task(chan, &poll_dis);
+}
