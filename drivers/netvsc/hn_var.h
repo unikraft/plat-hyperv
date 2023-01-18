@@ -19,160 +19,6 @@
 
 #include <vmbus/vmbus_chanvar.h>
 
-/*
- * Tunable ethdev params
- */
-#define HN_MIN_RX_BUF_SIZE	1024
-#define HN_MAX_XFER_LEN		2048
-#define	HN_MAX_MAC_ADDRS	1
-#define HN_MAX_CHANNELS		64
-
-/* Claimed to be 12232B */
-#define HN_MTU_MAX		(9 * 1024)
-
-/* Retry interval */
-#define HN_CHAN_INTERVAL_US	100
-
-/* Host monitor interval */
-#define HN_CHAN_LATENCY_NS	50000
-
-#define HN_TXCOPY_THRESHOLD	512
-#define HN_RXCOPY_THRESHOLD	256
-
-#define HN_RX_EXTMBUF_ENABLE	0
-
-#ifndef PAGE_MASK
-//#define PAGE_MASK (rte_mem_page_size() - 1)
-#define PAGE_MASK __PAGE_MASK
-#endif
-
-/* START UK defines */
-typedef uint64_t rte_iova_t;
-#define RTE_BAD_IOVA 0
-
-#define RNDIS_DELAY_MS 10
-#define rte_delay_ms(ms)
-#define rte_delay_us(us)
-/* END */
-
-struct hn_data;
-struct hn_txdesc;
-
-struct hn_stats {
-	uint64_t	packets;
-	uint64_t	bytes;
-	uint64_t	errors;
-	uint64_t	ring_full;
-	uint64_t	channel_full;
-	uint64_t	multicast;
-	uint64_t	broadcast;
-	/* Size bins in array as RFC 2819, undersized [0], 64 [1], etc */
-	uint64_t	size_bins[8];
-};
-
-struct uk_netdev_tx_queue {
-	/* The netfront device */
-	struct hn_dev *hn_dev;
-	/* The libuknet queue identifier */
-	uint16_t lqueue_id;
-	/* True if initialized */
-	bool initialized;
-
-	struct hn_data  *hv;
-	struct vmbus_channel *chan;
-	uint16_t	port_id;
-	uint16_t	queue_id;
-	uint32_t	free_thresh;
-	// struct rte_mempool *txdesc_pool;
-	struct uk_allocpool *txdesc_pool;
-	// const struct rte_memzone *tx_rndis_mz;
-	void		*tx_rndis;
-	rte_iova_t	tx_rndis_iova;
-
-	/* Applied packet transmission aggregation limits. */
-	uint32_t	agg_szmax;
-	uint32_t	agg_pktmax;
-	uint32_t	agg_align;
-
-	/* Packet transmission aggregation states */
-	struct hn_txdesc *agg_txd;
-	uint32_t	agg_pktleft;
-	uint32_t	agg_szleft;
-	struct rndis_packet_msg *agg_prevpkt;
-
-	struct hn_stats stats;
-};
-
-struct uk_netdev_rx_queue {
-	/* The netfront device */
-	struct hn_dev *hn_dev;
-	/* The libuknet queue identifier */
-	uint16_t lqueue_id;
-	/* True if initialized */
-	bool initialized;
-
-	/* The flag to interrupt on the transmit queue */
-	uint8_t intr_enabled;
-
-	struct hn_data  *hv;
-	struct vmbus_channel *chan;
-	// struct rte_mempool *mb_pool;
-	// struct rte_ring *rx_ring;
-
-	// rte_spinlock_t ring_lock;
-	uk_spinlock ring_lock;
-	uint32_t event_sz;
-	uint16_t port_id;
-	uint16_t queue_id;
-	struct hn_stats stats;
-
-	void *event_buf;
-	struct hn_rx_bufinfo *rxbuf_info;
-	// rte_atomic32_t  rxbuf_outstanding;
-};
-
-
-/* multi-packet data from host */
-struct hn_rx_bufinfo {
-	struct vmbus_channel *chan;
-	// struct hn_rx_queue *rxq;
-	struct uk_netdev_rx_queue *rxq;
-	uint64_t	xactid;
-// 	struct rte_mbuf_ext_shared_info shinfo;
-} __rte_cache_aligned;
-
-#define HN_INVALID_PORT	UINT16_MAX
-
-// enum vf_device_state {
-// 	vf_unknown = 0,
-// 	vf_removed,
-// 	vf_configured,
-// 	vf_started,
-// 	vf_stopped,
-// };
-
-// struct hn_vf_ctx {
-// 	uint16_t	vf_port;
-
-// 	/* We have taken ownership of this VF port from DPDK */
-// 	bool		vf_attached;
-
-// 	/* VSC has requested to switch data path to VF */
-// 	bool		vf_vsc_switched;
-
-// 	/* VSP has reported the VF is present for this NIC */
-// 	bool		vf_vsp_reported;
-
-// 	enum vf_device_state	vf_state;
-// };
-
-// struct hv_hotadd_context {
-// 	LIST_ENTRY(hv_hotadd_context) list;
-// 	struct hn_data *hv;
-// 	struct rte_devargs da;
-// 	int eal_hot_plug_retry;
-// };
-
 /* From DPDK/lib/net/rte_ether.h */
 /**
  * Macro to print six-bytes of MAC address in hex format
@@ -245,6 +91,169 @@ rte_atomic32_add_return(rte_atomic32_t *v, int32_t inc)
 	return __sync_add_and_fetch(&v->cnt, inc);
 }
 
+/*
+ * Tunable ethdev params
+ */
+#define HN_MIN_RX_BUF_SIZE	1024
+#define HN_MAX_XFER_LEN		2048
+#define	HN_MAX_MAC_ADDRS	1
+#define HN_MAX_CHANNELS		64
+
+/* Claimed to be 12232B */
+#define HN_MTU_MAX		(9 * 1024)
+
+/* Retry interval */
+#define HN_CHAN_INTERVAL_US	100
+
+/* Host monitor interval */
+#define HN_CHAN_LATENCY_NS	50000
+
+#define HN_TXCOPY_THRESHOLD	512
+#define HN_RXCOPY_THRESHOLD	256
+
+#define HN_RX_EXTMBUF_ENABLE	0
+
+#ifndef PAGE_MASK
+//#define PAGE_MASK (rte_mem_page_size() - 1)
+#define PAGE_MASK __PAGE_SIZE - 1
+#endif
+
+/* START UK defines */
+typedef uint64_t rte_iova_t;
+#define RTE_BAD_IOVA 0
+
+#define RTE_CACHE_LINE_SIZE CACHE_LINE_SIZE
+
+#define rte_malloc_virt2iova ukplat_virt_to_phys
+#define rte_mem_page_size() __PAGE_SIZE
+
+#define RNDIS_DELAY_MS 10
+#define rte_delay_ms(ms)
+#define rte_delay_us(us)
+
+#define rte_eth_dev hn_dev
+/* END */
+
+struct hn_data;
+struct hn_txdesc;
+
+struct hn_stats {
+	uint64_t	packets;
+	uint64_t	bytes;
+	uint64_t	errors;
+	uint64_t	ring_full;
+	uint64_t	channel_full;
+	uint64_t	multicast;
+	uint64_t	broadcast;
+	/* Size bins in array as RFC 2819, undersized [0], 64 [1], etc */
+	uint64_t	size_bins[8];
+};
+
+struct uk_netdev_tx_queue {
+	/* The netfront device */
+	struct hn_dev *hn_dev;
+	/* The libuknet queue identifier */
+	uint16_t lqueue_id;
+	/* True if initialized */
+	bool initialized;
+
+	struct hn_data  *hv;
+	struct vmbus_channel *chan;
+	uint16_t	port_id;
+	uint16_t	queue_id;
+	uint32_t	free_thresh;
+	// struct rte_mempool *txdesc_pool;
+	struct uk_allocpool *txdesc_pool;
+	// const struct rte_memzone *tx_rndis_mz;
+	void		*tx_rndis;
+	rte_iova_t	tx_rndis_iova;
+
+	/* Applied packet transmission aggregation limits. */
+	uint32_t	agg_szmax;
+	uint32_t	agg_pktmax;
+	uint32_t	agg_align;
+
+	/* Packet transmission aggregation states */
+	struct hn_txdesc *agg_txd;
+	uint32_t	agg_pktleft;
+	uint32_t	agg_szleft;
+	struct rndis_packet_msg *agg_prevpkt;
+
+	struct hn_stats stats;
+};
+
+struct uk_netdev_rx_queue {
+	/* The netfront device */
+	struct hn_dev *hn_dev;
+	/* The libuknet queue identifier */
+	uint16_t lqueue_id;
+	/* True if initialized */
+	bool initialized;
+
+	/* The flag to interrupt on the transmit queue */
+	uint8_t intr_enabled;
+
+	struct hn_data  *hv;
+	struct vmbus_channel *chan;
+	// struct rte_mempool *mb_pool;
+	// struct rte_ring *rx_ring;
+
+	struct rte_mem_resource br_res;
+	// rte_spinlock_t ring_lock;
+	uk_spinlock ring_lock;
+	uint32_t event_sz;
+	uint16_t port_id;
+	uint16_t queue_id;
+	struct hn_stats stats;
+
+	void *event_buf;
+	struct hn_rx_bufinfo *rxbuf_info;
+	// rte_atomic32_t  rxbuf_outstanding;
+};
+
+
+/* multi-packet data from host */
+struct hn_rx_bufinfo {
+	struct vmbus_channel *chan;
+	// struct hn_rx_queue *rxq;
+	struct uk_netdev_rx_queue *rxq;
+	uint64_t	xactid;
+// 	struct rte_mbuf_ext_shared_info shinfo;
+} __rte_cache_aligned;
+
+#define HN_INVALID_PORT	UINT16_MAX
+
+// enum vf_device_state {
+// 	vf_unknown = 0,
+// 	vf_removed,
+// 	vf_configured,
+// 	vf_started,
+// 	vf_stopped,
+// };
+
+// struct hn_vf_ctx {
+// 	uint16_t	vf_port;
+
+// 	/* We have taken ownership of this VF port from DPDK */
+// 	bool		vf_attached;
+
+// 	/* VSC has requested to switch data path to VF */
+// 	bool		vf_vsc_switched;
+
+// 	/* VSP has reported the VF is present for this NIC */
+// 	bool		vf_vsp_reported;
+
+// 	enum vf_device_state	vf_state;
+// };
+
+// struct hv_hotadd_context {
+// 	LIST_ENTRY(hv_hotadd_context) list;
+// 	struct hn_data *hv;
+// 	struct rte_devargs da;
+// 	int eal_hot_plug_retry;
+// };
+
+
 struct hn_data {
 	struct uk_alloc *a;
 
@@ -299,6 +308,7 @@ struct hn_data {
 	uint16_t	rss_ind[128];
 
 	// struct rte_eth_dev_owner owner;
+	struct hn_dev *owner;
 
 	struct vmbus_channel *channels[HN_MAX_CHANNELS];
 
@@ -434,6 +444,7 @@ struct hn_dev {
 	uint16_t rxqs_num;
 	struct uk_netdev_tx_queue *txqs;
 	struct uk_netdev_rx_queue *rxqs;
+	struct rte_mem_resource br_res[128];
 	/* Maximum number of queue pairs */
 	uint16_t  max_queue_pairs;
 	/* True if using split event channels */
@@ -503,3 +514,6 @@ struct hn_txdesc {
 
 #define HN_RXBUF_SIZE			(31 * 1024 * 1024)
 #define HN_RXBUF_SIZE_COMPAT		(15 * 1024 * 1024)
+
+#define HN_TXBR_SIZE			(128 * PAGE_SIZE)
+#define HN_RXBR_SIZE			(128 * PAGE_SIZE)

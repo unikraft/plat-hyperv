@@ -365,58 +365,61 @@ static void hn_txd_put(struct uk_netdev_tx_queue *txq, struct hn_txdesc *txd)
 // 		return RTE_ETH_TX_DESC_DONE;
 // }
 
-// static void
-// hn_nvs_send_completed(struct rte_eth_dev *dev, uint16_t queue_id,
-// 		      unsigned long xactid, const struct hn_nvs_rndis_ack *ack)
-// {
-// 	struct hn_data *hv = dev->data->dev_private;
-// 	struct hn_txdesc *txd = (struct hn_txdesc *)xactid;
-// 	struct hn_tx_queue *txq;
+static void
+hn_nvs_send_completed(struct rte_eth_dev *dev, uint16_t queue_id,
+		      unsigned long xactid, const struct hn_nvs_rndis_ack *ack)
+{
+	// struct hn_data *hv = dev->data->dev_private;
+	struct hn_data *hv = dev->dev_private;
+	struct hn_txdesc *txd = (struct hn_txdesc *)xactid;
+	struct hn_tx_queue *txq;
 
-// 	/* Control packets are sent with xacid == 0 */
-// 	if (!txd)
-// 		return;
+	/* Control packets are sent with xacid == 0 */
+	if (!txd)
+		return;
 
-// 	txq = dev->data->tx_queues[queue_id];
-// 	if (likely(ack->status == NVS_STATUS_OK)) {
-// 		PMD_TX_LOG(DEBUG, "port %u:%u complete tx %u packets %u bytes %u",
-// 			   txq->port_id, txq->queue_id, txd->chim_index,
-// 			   txd->packets, txd->data_size);
-// 		txq->stats.bytes += txd->data_size;
-// 		txq->stats.packets += txd->packets;
-// 	} else {
-// 		PMD_DRV_LOG(NOTICE, "port %u:%u complete tx %u failed status %u",
-// 			    txq->port_id, txq->queue_id, txd->chim_index, ack->status);
-// 		++txq->stats.errors;
-// 	}
+	txq = dev->data->tx_queues[queue_id];
+	if (likely(ack->status == NVS_STATUS_OK)) {
+		PMD_TX_LOG(DEBUG, "port %u:%u complete tx %u packets %u bytes %u",
+			   txq->port_id, txq->queue_id, txd->chim_index,
+			   txd->packets, txd->data_size);
+		txq->stats.bytes += txd->data_size;
+		txq->stats.packets += txd->packets;
+	} else {
+		PMD_DRV_LOG(NOTICE, "port %u:%u complete tx %u failed status %u",
+			    txq->port_id, txq->queue_id, txd->chim_index, ack->status);
+		++txq->stats.errors;
+	}
 
-// 	if (txd->chim_index != NVS_CHIM_IDX_INVALID) {
-// 		hn_chim_free(hv, txd->chim_index);
-// 		txd->chim_index = NVS_CHIM_IDX_INVALID;
-// 	}
+	if (txd->chim_index != NVS_CHIM_IDX_INVALID) {
+		hn_chim_free(hv, txd->chim_index);
+		txd->chim_index = NVS_CHIM_IDX_INVALID;
+	}
 
-// 	rte_pktmbuf_free(txd->m);
-// 	hn_txd_put(txq, txd);
-// }
+	rte_pktmbuf_free(txd->m);
+	hn_txd_put(txq, txd);
+}
 
-// /* Handle transmit completion events */
-// static void
-// hn_nvs_handle_comp(struct rte_eth_dev *dev, uint16_t queue_id,
-// 		   const struct vmbus_chanpkt_hdr *pkt,
-// 		   const void *data)
-// {
-// 	const struct hn_nvs_hdr *hdr = data;
+/* Handle transmit completion events */
+static void
+hn_nvs_handle_comp(struct rte_eth_dev *dev, uint16_t queue_id,
+		   const struct vmbus_chanpkt_hdr *pkt,
+		   const void *data)
+{
+	const struct hn_nvs_hdr *hdr = data;
 
-// 	switch (hdr->type) {
-// 	case NVS_TYPE_RNDIS_ACK:
-// 		hn_nvs_send_completed(dev, queue_id, pkt->xactid, data);
-// 		break;
+	switch (hdr->type) {
+	case NVS_TYPE_RNDIS_ACK:
+		hn_nvs_send_completed(dev, queue_id, pkt->cph_xactid, data);
+		break;
 
-// 	default:
-// 		PMD_DRV_LOG(NOTICE, "unexpected send completion type %u",
-// 			   hdr->type);
-// 	}
-// }
+	default:
+		// PMD_DRV_LOG(NOTICE, "unexpected send completion type %u",
+		// 	   hdr->type);
+		uk_pr_warn("unexpected send completion type %u",
+			   hdr->type);
+	}
+}
 
 // /* Parse per-packet info (meta data) */
 // static int
@@ -1032,83 +1035,88 @@ static void hn_txd_put(struct uk_netdev_tx_queue *txq, struct hn_txdesc *txd)
 uint32_t hn_process_events(struct hn_data *hv, uint16_t queue_id,
 			   uint32_t tx_limit)
 {
-// 	struct rte_eth_dev *dev = &rte_eth_devices[hv->port_id];
-// 	struct hn_rx_queue *rxq;
-// 	uint32_t bytes_read = 0;
+	// struct rte_eth_dev *dev = &rte_eth_devices[hv->port_id];
+	struct hn_dev *dev = hv->owner;
+	// struct hn_rx_queue *rxq;
+	struct uk_netdev_rx_queue *rxq;
+	uint32_t bytes_read = 0;
 	uint32_t tx_done = 0;
-// 	int ret = 0;
+	int ret = 0;
 
-// 	rxq = queue_id == 0 ? hv->primary : dev->data->rx_queues[queue_id];
+	// rxq = queue_id == 0 ? hv->primary : dev->data->rx_queues[queue_id];
+	rxq = hv->primary;
 
-// 	/*
-// 	 * Since channel is shared between Rx and TX queue need to have a lock
-// 	 * since DPDK does not force same CPU to be used for Rx/Tx.
-// 	 */
-// 	if (unlikely(!rte_spinlock_trylock(&rxq->ring_lock)))
-// 		return 0;
+	/*
+	 * Since channel is shared between Rx and TX queue need to have a lock
+	 * since DPDK does not force same CPU to be used for Rx/Tx.
+	 */
+	if (unlikely(!rte_spinlock_trylock(&rxq->ring_lock)))
+		return 0;
 
-// 	for (;;) {
-// 		const struct vmbus_chanpkt_hdr *pkt;
-// 		uint32_t len = rxq->event_sz;
-// 		const void *data;
+	for (;;) {
+		const struct vmbus_chanpkt_hdr *pkt;
+		uint32_t len = rxq->event_sz;
+		const void *data;
 
-// retry:
-// 		ret = rte_vmbus_chan_recv_raw(rxq->chan, rxq->event_buf, &len);
-// 		if (ret == -EAGAIN)
-// 			break;	/* ring is empty */
+retry:
+		ret = rte_vmbus_chan_recv_raw(rxq->chan, rxq->event_buf, &len);
+		if (ret == -EAGAIN)
+			break;	/* ring is empty */
 
-// 		if (unlikely(ret == -ENOBUFS)) {
-// 			/* event buffer not large enough to read ring */
+		if (unlikely(ret == -ENOBUFS)) {
+			/* event buffer not large enough to read ring */
 
-// 			PMD_DRV_LOG(DEBUG,
-// 				    "event buffer expansion (need %u)", len);
-// 			rxq->event_sz = len + len / 4;
-// 			rxq->event_buf = rte_realloc(rxq->event_buf, rxq->event_sz,
-// 						     RTE_CACHE_LINE_SIZE);
-// 			if (rxq->event_buf)
-// 				goto retry;
-// 			/* out of memory, no more events now */
-// 			rxq->event_sz = 0;
-// 			break;
-// 		}
+			// PMD_DRV_LOG(DEBUG,
+			// 	    "event buffer expansion (need %u)", len);
+			uk_pr_debug("event buffer expansion (need %u)", len);
+			rxq->event_sz = len + len / 4;
+			rxq->event_buf = rte_realloc(rxq->event_buf, rxq->event_sz,
+						     RTE_CACHE_LINE_SIZE);
+			if (rxq->event_buf)
+				goto retry;
+			/* out of memory, no more events now */
+			rxq->event_sz = 0;
+			break;
+		}
 
-// 		if (unlikely(ret <= 0)) {
-// 			/* This indicates a failure to communicate (or worse) */
-// 			rte_exit(EXIT_FAILURE,
-// 				 "vmbus ring buffer error: %d", ret);
-// 		}
+		if (unlikely(ret <= 0)) {
+			/* This indicates a failure to communicate (or worse) */
+			rte_exit(EXIT_FAILURE,
+				 "vmbus ring buffer error: %d", ret);
+		}
 
-// 		bytes_read += ret;
-// 		pkt = (const struct vmbus_chanpkt_hdr *)rxq->event_buf;
-// 		data = (char *)rxq->event_buf + vmbus_chanpkt_getlen(pkt->hlen);
+		bytes_read += ret;
+		pkt = (const struct vmbus_chanpkt_hdr *)rxq->event_buf;
+		data = (char *)rxq->event_buf + vmbus_chanpkt_getlen(pkt->cph_hlen);
 
-// 		switch (pkt->type) {
-// 		case VMBUS_CHANPKT_TYPE_COMP:
-// 			++tx_done;
-// 			hn_nvs_handle_comp(dev, queue_id, pkt, data);
-// 			break;
+		switch (pkt->cph_type) {
+		case VMBUS_CHANPKT_TYPE_COMP:
+			++tx_done;
+			hn_nvs_handle_comp(dev, queue_id, pkt, data);
+			break;
 
-// 		case VMBUS_CHANPKT_TYPE_RXBUF:
-// 			hn_nvs_handle_rxbuf(dev, hv, rxq, pkt, data);
-// 			break;
+		case VMBUS_CHANPKT_TYPE_RXBUF:
+			hn_nvs_handle_rxbuf(dev, hv, rxq, pkt, data);
+			break;
 
-// 		case VMBUS_CHANPKT_TYPE_INBAND:
-// 			hn_nvs_handle_notify(dev, pkt, data);
-// 			break;
+		case VMBUS_CHANPKT_TYPE_INBAND:
+			hn_nvs_handle_notify(dev, pkt, data);
+			break;
 
-// 		default:
-// 			PMD_DRV_LOG(ERR, "unknown chan pkt %u", pkt->type);
-// 			break;
-// 		}
+		default:
+			// PMD_DRV_LOG(ERR, "unknown chan pkt %u", pkt->type);
+			uk_pr_err("unknown chan pkt %u", pkt->cph_type);
+			break;
+		}
 
-// 		if (tx_limit && tx_done >= tx_limit)
-// 			break;
-// 	}
+		if (tx_limit && tx_done >= tx_limit)
+			break;
+	}
 
-// 	if (bytes_read > 0)
-// 		rte_vmbus_chan_signal_read(rxq->chan, bytes_read);
+	if (bytes_read > 0)
+		rte_vmbus_chan_signal_read(rxq->chan, bytes_read);
 
-// 	rte_spinlock_unlock(&rxq->ring_lock);
+	rte_spinlock_unlock(&rxq->ring_lock);
 
 	return tx_done;
 }

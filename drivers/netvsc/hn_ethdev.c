@@ -1854,33 +1854,35 @@ static const struct uk_netdev_ops hn_ops = {
 	.promiscuous_get = hn_dev_promisc_get,
 };
 
-#if 0
 static int
-hn_chan_attach(struct hn_data *hv, struct vmbus_channel *chan)
+hn_chan_attach(struct hn_dev *hndev, struct hn_data *hv, struct vmbus_channel *chan)
 {
 	struct vmbus_chan_br cbr;
-	struct hn_rx_ring *rxr;
-	struct hn_tx_ring *txr = NULL;
+	//struct hn_rx_ring *rxr;
+	//struct hn_tx_ring *txr = NULL;
 	int idx, error;
 
-// 	idx = vmbus_chan_subidx(chan);
+	//idx = vmbus_chan_subidx(chan);
+	idx = 0;
 
 	/*
 	 * Link this channel to RX/TX ring.
 	 */
-// 	KASSERT(idx >= 0 && idx < sc->hn_rx_ring_inuse,
-// 	    ("invalid channel index %d, should > 0 && < %d",
-// 	     idx, sc->hn_rx_ring_inuse));
-// 	rxr = &sc->hn_rx_ring[idx];
-// 	KASSERT((rxr->hn_rx_flags & HN_RX_FLAG_ATTACHED) == 0,
-// 	    ("RX ring %d already attached", idx));
-// 	rxr->hn_rx_flags |= HN_RX_FLAG_ATTACHED;
-// 	rxr->hn_chan = chan;
+	//KASSERT(idx >= 0 && idx < sc->hn_rx_ring_inuse,
+	//    ("invalid channel index %d, should > 0 && < %d",
+	//     idx, sc->hn_rx_ring_inuse));
+	//rxr = &hv->hn_rx_ring[idx];
+	//KASSERT((rxr->hn_rx_flags & HN_RX_FLAG_ATTACHED) == 0,
+	//    ("RX ring %d already attached", idx));
+	//rxr->hn_rx_flags |= HN_RX_FLAG_ATTACHED;
+	//rxr->hn_chan = chan;
 
-// 	if (bootverbose) {
-// 		if_printf(sc->hn_ifp, "link RX ring %d to chan%u\n",
-// 		    idx, vmbus_chan_id(chan));
-// 	}
+	//if (bootverbose) {
+		// if_printf(sc->hn_ifp, "link RX ring %d to chan%u\n",
+		//     idx, vmbus_chan_id(chan));
+		uk_pr_info("link RX ring %d to chan%u\n",
+		    idx, vmbus_chan_id(chan));
+	//}
 
 // 	if (idx < sc->hn_tx_ring_inuse) {
 // 		txr = &sc->hn_tx_ring[idx];
@@ -1890,35 +1892,58 @@ hn_chan_attach(struct hn_data *hv, struct vmbus_channel *chan)
 
 // 		txr->hn_chan = chan;
 // 		if (bootverbose) {
-// 			if_printf(sc->hn_ifp, "link TX ring %d to chan%u\n",
-// 			    idx, vmbus_chan_id(chan));
+ 			// if_printf(sc->hn_ifp, "link TX ring %d to chan%u\n",
+ 			//     idx, vmbus_chan_id(chan));
+ 			uk_pr_info("link TX ring %d to chan%u\n",
+ 			    idx, vmbus_chan_id(chan));
 // 		}
 // 	}
 
 // 	/* Bind this channel to a proper CPU. */
 // 	vmbus_chan_cpu_set(chan, HN_RING_IDX2CPU(sc, idx));
 
+	// rxr->hn_br = hyperv_dmamem_alloc(bus_get_dma_tag(dev),
+	// 	PAGE_SIZE, 0, HN_TXBR_SIZE + HN_RXBR_SIZE,
+	// 	&rxr->hn_br_dma, BUS_DMA_WAITOK);
+	hndev->br_res[idx].addr = hyperv_mem_alloc(hv->a, HN_TXBR_SIZE + HN_RXBR_SIZE);
+	if (hndev->br_res[idx].addr == NULL) {
+	uk_pr_err("allocate bufring failed\n");
+		return ENOMEM;
+	}
+	hndev->br_res[idx].phys_addr = ukplat_virt_to_phys(hndev->br_res[idx].addr);
+	hndev->br_res[idx].len = HN_TXBR_SIZE + HN_RXBR_SIZE;
+	uk_pr_debug("addr: %p, paddr: %p\n", hndev->br_res[idx].addr, hndev->br_res[idx].phys_addr);
+
 	/*
 	 * Open this channel
 	 */
-	cbr.cbr = rxr->hn_br;
-// 	cbr.cbr_paddr = rxr->hn_br_dma.hv_paddr;
+	// cbr.cbr = rxr->hn_br;
+	cbr.cbr = hndev->br_res[idx].addr;
+	// cbr.cbr_paddr = rxr->hn_br_paddr;
+	cbr.cbr_paddr = hndev->br_res[idx].phys_addr;
 	cbr.cbr_txsz = HN_TXBR_SIZE;
 	cbr.cbr_rxsz = HN_RXBR_SIZE;
-	error = vmbus_chan_open_br(chan, &cbr, NULL, 0, hn_chan_callback, rxr);
-// 	if (error) {
-// 		if (error == EISCONN) {
-// 			if_printf(sc->hn_ifp, "bufring is connected after "
-// 			    "chan%u open failure\n", vmbus_chan_id(chan));
-// 			rxr->hn_rx_flags |= HN_RX_FLAG_BR_REF;
-// 		} else {
-// 			if_printf(sc->hn_ifp, "open chan%u failed: %d\n",
-// 			    vmbus_chan_id(chan), error);
-// 		}
-// 	}
+	// error = vmbus_chan_open_br(chan, &cbr, NULL, 0, hn_chan_callback, rxr);
+	error = vmbus_chan_open_br(chan, &cbr, NULL, 0, NULL, NULL);
+	if (error) {
+		if (error == EISCONN) {
+			// if_printf(sc->hn_ifp, "bufring is connected after "
+			//     "chan%u open failure\n", vmbus_chan_id(chan));
+			uk_pr_info("bufring is connected after "
+			    "chan%u open failure\n", vmbus_chan_id(chan));
+			// rxr->hn_rx_flags |= HN_RX_FLAG_BR_REF;
+		} else {
+			// if_printf(sc->hn_ifp, "open chan%u failed: %d\n",
+			//     vmbus_chan_id(chan), error);
+			uk_pr_info("open chan%u failed: %d\n",
+			    vmbus_chan_id(chan), error);
+		}
+	}
+
+	hndev->br_res[idx].phys_addr = chan->ch_bufring_gpadl;
+
 	return (error);
 }
-#endif
 
 static int hn_drv_add_dev(struct vmbus_device *vmbusdev)
 {
@@ -1928,8 +1953,6 @@ static int hn_drv_add_dev(struct vmbus_device *vmbusdev)
 	struct hn_data *hv;
 	int rc = 0;
 	int err = 0;
-
-	return err;
 
 	UK_ASSERT(vmbusdev != NULL);
 
@@ -1946,13 +1969,14 @@ static int hn_drv_add_dev(struct vmbus_device *vmbusdev)
 
 	hndev->dev_private = uk_calloc(drv_allocator, 1, sizeof(struct hn_data));
 	if (!hndev->dev_private) {
-			uk_pr_info("[hn_drv_add_dev] error uk_alloc hn_data\n");
+		uk_pr_info("[hn_drv_add_dev] error uk_calloc hn_data\n");
 		rc = -ENOMEM;
 		goto err_out;
 	}
 	hv = (struct hn_data *)hndev->dev_private;
 	hv->a = drv_allocator;
-
+	hv->owner = hndev;
+	
 	hndev->vmbusdev = vmbusdev;
 	hndev->mtu = UK_ETH_PAYLOAD_MAXLEN;
 	hndev->max_queue_pairs = 1;
@@ -1960,11 +1984,86 @@ static int hn_drv_add_dev(struct vmbus_device *vmbusdev)
 	hndev->netdev.rx_one = hn_recv;
 	hndev->netdev.ops = &hn_ops;
 
+	hv->primary = uk_calloc(drv_allocator,
+		1, sizeof(*hv->primary));
+	if (unlikely(!hv->primary)) {
+		uk_pr_err("[hn_drv_add_dev] Failed to allocate memory for primary Rx queue\n");
+		rc = -ENOMEM;
+	}
 	hv->channels[0] = (struct vmbus_channel *)vmbusdev->priv;
+	hv->primary->chan = hv->channels[0];
 
-	hn_chan_attach(hv, hv->channels[0]);
+	uk_pr_debug("[hn_drv_add_dev] hv->primary: %p, hv->channels[0]: %p\n", hv->primary, hv->channels[0]);
 
-	err = hn_attach(hndev, RTE_ETHER_MTU);
+	err = hn_chan_attach(hndev, hv, hv->channels[0]);
+	uk_pr_debug("[hn_drv_add_dev] hn_chan_attach err: %d\n", err);
+
+	hv->rxbuf_res = uk_calloc(drv_allocator, 1, sizeof(*hv->rxbuf_res));
+	if (!hv->rxbuf_res) {
+		uk_pr_info("[hn_drv_add_dev] error uk_calloc rxbuf_res\n");
+		rc = -ENOMEM;
+	}
+
+	hv->rxbuf_res->addr = hyperv_mem_alloc(hv->a, HN_RXBUF_SIZE);
+	if (hv->rxbuf_res->addr == NULL) {
+		uk_pr_err("[hn_drv_add_dev] allocate bufring failed\n");
+		return -ENOMEM;
+	}
+	hv->rxbuf_res->phys_addr = ukplat_virt_to_phys(hv->rxbuf_res->addr);
+	hv->rxbuf_res->len = HN_RXBUF_SIZE;
+	uk_pr_debug("[hn_drv_add_dev] addr: %p, paddr: %p\n", hv->rxbuf_res->addr, hv->rxbuf_res->phys_addr);
+
+	/*
+		* Connect the RXBUF GPADL to the primary channel.
+		*
+		* NOTE:
+		* Only primary channel has RXBUF connected to it.  Sub-channels
+		* just share this RXBUF.
+		*/
+	uint32_t rxbuf_gpadl = 0;
+	err = vmbus_chan_gpadl_connect(hv->channels[0],
+		hv->rxbuf_res->phys_addr, HN_RXBUF_SIZE, &rxbuf_gpadl);
+	if (err) {
+			uk_pr_err("rxbuf gpadl conn failed: %d\n",
+				err);
+			// goto cleanup;
+	}
+	hv->rxbuf_res->phys_addr = rxbuf_gpadl;
+
+
+	/* START From FreeBSD */
+
+	/*
+	 * Connect chimney sending buffer GPADL to the primary channel.
+	 *
+	 * NOTE:
+	 * Only primary channel has chimney sending buffer connected to it.
+	 * Sub-channels just share this chimney sending buffer.
+	 */
+	hv->chim_res.addr = hyperv_mem_alloc(hv->a, HN_CHIM_SIZE);
+	if (hv->chim_res.addr == NULL) {
+		uk_pr_err("[hn_drv_add_dev] allocate bufring failed\n");
+		return -ENOMEM;
+	}
+	hv->chim_res.phys_addr = ukplat_virt_to_phys(hv->chim_res.addr);
+	hv->chim_res.len = HN_RXBUF_SIZE;
+	uk_pr_debug("[hn_drv_add_dev] chim_res.addr: %p, chim_res.paddr: %p\n", hv->chim_res.addr, hv->chim_res.phys_addr);
+
+	uint32_t chim_gpadl = 0;
+	err = vmbus_chan_gpadl_connect(hv->channels[0],
+  	    hv->chim_res.phys_addr, HN_CHIM_SIZE, &chim_gpadl);
+	if (err) {
+		uk_pr_err("chim gpadl conn failed: %d\n", err);
+		// goto cleanup;
+	}
+
+	hv->chim_res.phys_addr = chim_gpadl;
+
+	/* END */
+
+
+	err = hn_attach(hv, RTE_ETHER_MTU);
+	uk_pr_debug("[hn_drv_add_dev] hn_attach err: %d\n", err);
 	if  (err)
 		goto failed;
 

@@ -93,6 +93,8 @@ __hn_nvs_execute(struct hn_data *hv,
 
 	hdr = (struct hn_nvs_hdr *)buffer;
 
+	uk_pr_info("[__hn_nvs_execute] hdr->type: %u\n", hdr->type);
+
 	/* Silently drop received packets while waiting for response */
 	switch (hdr->type) {
 	case NVS_TYPE_RNDIS:
@@ -139,11 +141,13 @@ hn_nvs_execute(struct hn_data *hv,
 	struct uk_netdev_rx_queue *rxq = hv->primary;
 	int ret;
 
+	uk_pr_info("[hn_nvs_execute] hv: %p, hv->primary: %p\n", hv, hv->primary);
+
 	//rte_spinlock_lock(&rxq->ring_lock);
 	uk_spin_lock(&rxq->ring_lock);
 	ret = __hn_nvs_execute(hv, req, reqlen, resp, resplen, type);
 	// rte_spinlock_unlock(&rxq->ring_lock);
-	uk_spin_lock(&rxq->ring_lock);
+	uk_spin_unlock(&rxq->ring_lock);
 
 	return ret;
 }
@@ -186,6 +190,8 @@ hn_nvs_conn_rxbuf(struct hn_data *hv)
 	uint32_t status;
 	int error;
 
+	uk_pr_info("[hn_nvs_conn_rxbuf] start\n");
+
 	/* Kernel has already setup RXBUF on primary channel. */
 
 	/*
@@ -194,7 +200,7 @@ hn_nvs_conn_rxbuf(struct hn_data *hv)
 	conn.type = NVS_TYPE_RXBUF_CONN;
 	conn.gpadl = hv->rxbuf_res->phys_addr;
 	conn.sig = NVS_RXBUF_SIG;
-	uk_pr_debug("connect rxbuff va=%p gpad=%#" PRIx64,
+	uk_pr_debug("connect rxbuff va=%p gpad=%#" PRIx64 "\n",
 		    hv->rxbuf_res->addr,
 		    hv->rxbuf_res->phys_addr);
 
@@ -202,7 +208,7 @@ hn_nvs_conn_rxbuf(struct hn_data *hv)
 			       &resp, sizeof(resp),
 			       NVS_TYPE_RXBUF_CONNRESP);
 	if (error) {
-		uk_pr_err("exec nvs rxbuf conn failed: %d",
+		uk_pr_err("exec nvs rxbuf conn failed: %d\n",
 			    error);
 		return error;
 	}
@@ -213,15 +219,18 @@ hn_nvs_conn_rxbuf(struct hn_data *hv)
 		return -EIO;
 	}
 	if (resp.nsect != 1) {
-		uk_pr_err("nvs rxbuf response num sections %u != 1",
+		uk_pr_err("nvs rxbuf response num sections %u != 1\n",
 			    resp.nsect);
 		return -EIO;
 	}
 
-	uk_pr_info("receive buffer size %u count %u",
+	uk_pr_info("receive buffer size %u count %u\n",
 		    resp.nvs_sect[0].slotsz,
 		    resp.nvs_sect[0].slotcnt);
 	hv->rxbuf_section_cnt = resp.nvs_sect[0].slotcnt;
+
+	uk_pr_info("[hn_nvs_conn_rxbuf] hv: %p\n", hv);
+	uk_pr_info("[hn_nvs_conn_rxbuf] hv->primary: %p\n", hv->primary);
 
 	/*
 	 * Primary queue's rxbuf_info is not allocated at creation time.
@@ -238,6 +247,7 @@ hn_nvs_conn_rxbuf(struct hn_data *hv)
 		uk_pr_err("could not allocate rxbuf info");
 		return -ENOMEM;
 	}
+	uk_pr_info("[hn_nvs_conn_rxbuf] end\n");
 
 	return 0;
 }
@@ -307,25 +317,6 @@ hn_nvs_conn_chim(struct hn_data *hv)
 	// unsigned long len = hv->chim_res->len;
 	unsigned long len = hv->chim_res.len;
 	int error;
-
-	/* START From FreeBSD */
-	/*
-	 * Connect chimney sending buffer GPADL to the primary channel.
-	 *
-	 * NOTE:
-	 * Only primary channel has chimney sending buffer connected to it.
-	 * Sub-channels just share this chimney sending buffer.
-	 */
-	// error = vmbus_chan_gpadl_connect(hv->channels[0],
-  	//     hv->chim_res->phys_addr, HN_CHIM_SIZE, &hv->chim);
-
-	error = vmbus_chan_gpadl_connect(hv->channels[0],
-  	    hv->chim_res.phys_addr, HN_CHIM_SIZE, &hv->chim_gpadl);
-	if (error) {
-		uk_pr_err("chim gpadl conn failed: %d\n", error);
-		goto cleanup;
-	}
-	/* END */
 
 	/* Connect chimney sending buffer to NVS */
 	memset(&chim, 0, sizeof(chim));
@@ -461,33 +452,47 @@ hn_nvs_attach(struct hn_data *hv, unsigned int mtu)
 {
 	int error;
 
+	uk_pr_info("[hn_nvs_attach] start mtu: %u\n", mtu);
+
 	/*
 	 * Initialize NVS.
 	 */
 	error = hn_nvs_init(hv);
-	if (error)
+	if (error) {
+		uk_pr_info("[hn_nvs_attach] hn_nvs_init error: %d\n", error);
 		return error;
+	}
+	uk_pr_info("[hn_nvs_attach] hn_nvs_init done\n");
 
 	/** Configure NDIS before initializing it. */
 	if (hv->nvs_ver >= NVS_VERSION_2) {
 		error = hn_nvs_conf_ndis(hv, mtu);
-		if (error)
+		if (error) {
+			uk_pr_info("[hn_nvs_attach] hn_nvs_conf_ndis error: %d\n", error);
 			return error;
+		}
+		uk_pr_info("[hn_nvs_attach] hn_nvs_conf_ndis done\n");
 	}
 
 	/*
 	 * Initialize NDIS.
 	 */
 	error = hn_nvs_init_ndis(hv);
-	if (error)
+	if (error) {
+		uk_pr_info("[hn_nvs_attach] hn_nvs_init_ndis error: %d\n", error);
 		return error;
+	}
+	uk_pr_info("[hn_nvs_attach] hn_nvs_init_ndis done\n");
 
 	/*
 	 * Connect RXBUF.
 	 */
 	error = hn_nvs_conn_rxbuf(hv);
-	if (error)
+	if (error) {
+		uk_pr_info("[hn_nvs_attach] hn_nvs_conn_rxbuf error: %d\n", error);
 		return error;
+	}
+	uk_pr_info("[hn_nvs_attach] hn_nvs_conn_rxbuf done\n");
 
 	/*
 	 * Connect chimney sending buffer.
@@ -495,9 +500,12 @@ hn_nvs_attach(struct hn_data *hv, unsigned int mtu)
 	error = hn_nvs_conn_chim(hv);
 	if (error) {
 		hn_nvs_disconn_rxbuf(hv);
+		uk_pr_info("[hn_nvs_attach] hn_nvs_conn_chim error: %d\n", error);
 		return error;
 	}
+	uk_pr_info("[hn_nvs_attach] hn_nvs_conn_chim done\n");
 
+	uk_pr_info("[hn_nvs_attach] end\n");
 	return 0;
 }
 
