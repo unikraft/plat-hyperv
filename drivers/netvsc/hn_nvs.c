@@ -102,7 +102,7 @@ __hn_nvs_execute(struct hn_data *hv,
 		/* fallthrough */
 
 	case NVS_TYPE_TXTBL_NOTE:
-		uk_pr_debug("discard packet type 0x%x", hdr->type);
+		uk_pr_debug("discard packet type 0x%x\n", hdr->type);
 		goto retry;
 	}
 

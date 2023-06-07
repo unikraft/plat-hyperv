@@ -975,10 +975,14 @@
 static int
 hn_dev_start(struct uk_netdev *dev)
 {
+	struct hn_dev *hndev;
 	// struct hn_data *hv = dev->data->dev_private;
+	struct hn_data *hv;
 	int error;
 	uk_pr_info("[hn_dev_start] enter\n");
-	error = 0;
+
+	hndev = to_hn_dev(dev);
+	hv = (struct hn_data *)hndev->dev_private;
 
 //	PMD_INIT_FUNC_TRACE();
 
@@ -990,12 +994,13 @@ hn_dev_start(struct uk_netdev *dev)
 //		return error;
 //	}
 
-//	error = hn_rndis_set_rxfilter(hv,
-//				      NDIS_PACKET_TYPE_BROADCAST |
-//				      NDIS_PACKET_TYPE_ALL_MULTICAST |
-//				      NDIS_PACKET_TYPE_DIRECTED);
-//	if (error)
-//		return error;
+	error = hn_rndis_set_rxfilter(hv,
+				      NDIS_PACKET_TYPE_BROADCAST |
+				      NDIS_PACKET_TYPE_ALL_MULTICAST |
+				      NDIS_PACKET_TYPE_DIRECTED);
+	uk_pr_info("[hn_dev_start] error: %d\n", error);
+	if (error)
+		return error;
 
 //	error = hn_vf_start(dev);
 //	if (error)
@@ -1005,26 +1010,9 @@ hn_dev_start(struct uk_netdev *dev)
 //	if (error == 0)
 //		hn_dev_link_update(dev, 0);
 
+	uk_pr_info("[hn_dev_start] end\n");
 	return error;
 }
-
-// TODO: Remove
-// static int netfront_start(struct uk_netdev *n)
-// {
-// 	struct netfront_dev *nfdev;
-// 	int rc;
-
-// 	UK_ASSERT(n != NULL);
-// 	nfdev = to_netfront_dev(n);
-
-// 	rc = netfront_xb_connect(nfdev);
-// 	if (rc) {
-// 		uk_pr_err("Error connecting to backend: %d\n", rc);
-// 		return rc;
-// 	}
-
-// 	return rc;
-// }
 
 //static int
 //hn_dev_stop(struct rte_eth_dev *dev)
@@ -1106,11 +1094,13 @@ hn_attach(struct hn_data *hv, unsigned int mtu)
 
 	/* Attach NVS */
 	error = hn_nvs_attach(hv, mtu);
+	uk_pr_debug("[hn_attach] hn_nvs_attach error: %d\n", error);
 	if (error)
 		goto failed_nvs;
 
 	/* Attach RNDIS */
 	error = hn_rndis_attach(hv);
+	uk_pr_debug("[hn_attach] hn_rndis_attach error: %d\n", error);
 	if (error)
 		goto failed_rndis;
 
@@ -1120,7 +1110,8 @@ hn_attach(struct hn_data *hv, unsigned int mtu)
 	 * the RNDIS rxfilter is _not_ zero on the hypervisor side
 	 * after the successful RNDIS initialization.
 	 */
-	hn_rndis_set_rxfilter(hv, NDIS_PACKET_TYPE_NONE);
+	//hn_rndis_set_rxfilter(hv, NDIS_PACKET_TYPE_NONE);
+	uk_pr_debug("[hn_attach] hn_rndis_set_rxfilter done\n");
 	return 0;
 failed_rndis:
 	hn_nvs_detach(hv);
@@ -1466,7 +1457,7 @@ static struct uk_netdev_tx_queue *hn_dev_txq_setup(struct uk_netdev *n,
 	// netif_tx_sring_t *sring;
 	// int err = -ENOMEM;
 
-	uk_pr_info("[hn_dev_txq_setup] start queue_id: %d\n", queue_id);
+	uk_pr_info("[hn_dev_txq_setup] start queue_id: %d, nb_desc: %u\n", queue_id, nb_desc);
 
 	UK_ASSERT(n != NULL);
 
@@ -1485,25 +1476,29 @@ static struct uk_netdev_tx_queue *hn_dev_txq_setup(struct uk_netdev *n,
 	txq->chan = hv->channels[queue_id];
 	txq->lqueue_id = queue_id;
 
+	struct uk_netdev_info netdev_info;
+	uk_netdev_info_get(n, &netdev_info);
+
+	txq->tx_rndis_pool = uk_allocpool_alloc(uk_alloc_get_default(), 16, sizeof(struct rndis_packet_msg),
+                          HN_RNDIS_PKT_ALIGNED);
+	if (txq->tx_rndis_pool == NULL) {
+// 		PMD_DRV_LOG(ERR,
+// 			    "mempool %s create failed: %d", name, rte_errno);
+		uk_pr_err("tx_rndis mempool %d create failed\n", queue_id);
+		goto error;
+	}
+
 	// txq->txdesc_pool = rte_mempool_create(name, nb_desc,
 	// 				      sizeof(struct hn_txdesc),
 	// 				      0, 0, NULL, NULL,
 	// 				      hn_txd_init, txq,
 	// 				      dev->device->numa_node, 0);
-// 	txq->txdesc_pool = rte_mempool_create(name, nb_desc,
-// 					      sizeof(struct hn_txdesc),
-// 					      0, 0, NULL, NULL,
-// 					      hn_txd_init, txq,
-// 					      dev->device->numa_node, 0);
-	struct uk_netdev_info netdev_info;
-	uk_netdev_info_get(n, &netdev_info);
-
-	txq->txdesc_pool = uk_allocpool_alloc(uk_alloc_get_default(), 1024, sizeof(struct hn_txdesc),
+	txq->txdesc_pool = uk_allocpool_alloc(uk_alloc_get_default(), 16, sizeof(struct hn_txdesc),
                           netdev_info.ioalign);
 	if (txq->txdesc_pool == NULL) {
 // 		PMD_DRV_LOG(ERR,
 // 			    "mempool %s create failed: %d", name, rte_errno);
-		uk_pr_err("mempool %d create failed", queue_id);
+		uk_pr_err("txdesc_pool mempool %d create failed\n", queue_id);
 		goto error;
 	}
 
@@ -1531,7 +1526,7 @@ static struct uk_netdev_rx_queue *hn_dev_rxq_setup(struct uk_netdev *n,
 	struct uk_netdev_rx_queue *rxq;
 	// netif_rx_sring_t *sring;
 
-	uk_pr_info("[hn_dev_rxq_setup] start\n");
+	uk_pr_info("[hn_dev_rxq_setup] start queue_id: %u, nb_desc: %u\n", queue_id, nb_desc);
 
 	UK_ASSERT(n != NULL);
 	UK_ASSERT(conf != NULL);
@@ -1583,8 +1578,8 @@ static struct uk_netdev_rx_queue *hn_dev_rxq_setup(struct uk_netdev *n,
 	// mask_evtchn(rxq->evtchn);
 	rxq->intr_enabled = 0;
 
-	// rxq->alloc_rxpkts = conf->alloc_rxpkts;
-	// rxq->alloc_rxpkts_argp = conf->alloc_rxpkts_argp;
+	rxq->alloc_rxpkts = conf->alloc_rxpkts;
+	rxq->alloc_rxpkts_argp = conf->alloc_rxpkts_argp;
 
 	// for (uint16_t i = 0; i < NET_RX_RING_SIZE; i++)
 	// 	rxq->gref[i] = GRANT_INVALID_REF;
@@ -1593,6 +1588,15 @@ static struct uk_netdev_rx_queue *hn_dev_rxq_setup(struct uk_netdev *n,
 	// netfront_rx_fillup(rxq, rxq->ring_size);
 
 	uk_spin_init(&rxq->ring_lock);
+	rxq->event_sz = HN_RXQ_EVENT_DEFAULT;
+	// rxq->event_buf = rte_malloc_socket("HN_EVENTS", HN_RXQ_EVENT_DEFAULT,
+	// 				   RTE_CACHE_LINE_SIZE, socket_id);
+	rxq->event_buf = uk_malloc(uk_alloc_get_default(), HN_RXQ_EVENT_DEFAULT);
+	if (!rxq->event_buf) {
+		// rte_free(rxq);
+		uk_free(uk_alloc_get_default(), rxq->event_buf);
+		return NULL;
+	}
 
 	rxq->initialized = true;
 	hndev->rxqs_num++;
@@ -1607,6 +1611,7 @@ static int hn_dev_rx_intr_enable(struct uk_netdev *n __unused,
 {
 	int rc;
 
+	// TODO: PV
 	uk_pr_info("[hn_dev_rx_intr_enable] start\n");
 
 	UK_ASSERT(n != NULL);
@@ -1626,6 +1631,7 @@ static int hn_dev_rx_intr_enable(struct uk_netdev *n __unused,
 	// rc = hn_rxq_intr_enable(rxq);
 	// if (!rc)
 	// 	rxq->intr_enabled |= NETFRONT_INTR_EN;
+	rxq->intr_enabled = 1;
 
 	// return rc;
 
@@ -1638,12 +1644,14 @@ static int hn_dev_rx_intr_disable(struct uk_netdev *n __unused,
 {
 	uk_pr_info("[hn_dev_rx_intr_disable] start\n");
 
+	// TODO: PV
 	UK_ASSERT(n != NULL);
 	UK_ASSERT(rxq != NULL);
 	// UK_ASSERT(&rxq->hn_dev->netdev == n);
 
 	// rxq->intr_enabled &= ~(NETFRONT_INTR_USR_EN | NETFRONT_INTR_EN);
 	// mask_evtchn(rxq->evtchn);
+	rxq->intr_enabled = 0;
 
 	uk_pr_info("[hn_dev_rx_intr_disable] end\n");
 	return 0;
@@ -1714,13 +1722,15 @@ static int hn_dev_configure(struct uk_netdev *n,
 {
 	int rc;
 	struct hn_dev *hndev;
-
+	struct hn_data *hv;
+	
 	uk_pr_info("[hn_dev_configure] start\n");
 
 	UK_ASSERT(n != NULL);
 	UK_ASSERT(conf != NULL);
 
 	hndev = to_hn_dev(n);
+	hv = (struct hn_data *)hndev->dev_private;
 
 	rc = hn_rxtx_alloc(hndev, conf);
 	if (rc != 0) {
@@ -1730,10 +1740,25 @@ static int hn_dev_configure(struct uk_netdev *n,
 
 	hn_create_tx_data(hndev->dev_private, 1);
 
+	uk_pr_debug("[hn_dev_configure] Before get_eaddr\n");
+ 	rc = hn_rndis_get_eaddr(hv, hndev->hw_addr.addr_bytes);
+	if (rc) {
+		uk_pr_info(
+			    "get eaddr failed: %d", rc);
+		goto out;
+	}
+	uk_pr_debug("[hn_dev_configure] After get_eaddr\n");
+
+	rc = hn_rndis_conf_offload(hv, 0, 0);
+	if (rc) {
+		uk_pr_info(
+			    "offload configure failed: %d", rc);
+		goto out;
+	}
+
 out:
 	uk_pr_info("[hn_dev_configure] end\n");
-// 	return rc;
-	return 0;
+	return rc;
 }
 
 static void hn_dev_info_get(struct uk_netdev *n,
@@ -1763,10 +1788,11 @@ static const void *hn_dev_einfo_get(struct uk_netdev *n,
 {
 	struct hn_dev *hndev;
 
-	uk_pr_info("[hn_dev_einfo_get] start\n");
+	uk_pr_info("[hn_dev_einfo_get] start einfo_type: %d\n", einfo_type);
 
 	UK_ASSERT(n != NULL);
 
+	// TODO: PV
 	// hndev = to_hn_dev(n);
 	// switch (einfo_type) {
 	// case UK_NETDEV_IPV4_ADDR_STR:
@@ -1789,8 +1815,12 @@ static const struct uk_hwaddr *hn_dev_mac_get(struct uk_netdev *n)
 	struct hn_dev *hndev;
 
 	UK_ASSERT(n != NULL);
-	uk_pr_info("[hn_dev_mac_get] enter\n");
+
 	hndev = to_hn_dev(n);
+	uk_pr_info("[hn_dev_mac_get] enter hw_addr: %02X:%02X:%02X:%02X:%02X:%02X\n",
+			hndev->hw_addr.addr_bytes[0], hndev->hw_addr.addr_bytes[1],
+			hndev->hw_addr.addr_bytes[2], hndev->hw_addr.addr_bytes[3],
+			hndev->hw_addr.addr_bytes[4], hndev->hw_addr.addr_bytes[5]);
 	return &hndev->hw_addr;
 }
 
@@ -1799,8 +1829,9 @@ static uint16_t hn_dev_mtu_get(struct uk_netdev *n)
 	struct hn_dev *hndev;
 
 	UK_ASSERT(n != NULL);
-	uk_pr_info("[hn_dev_mtu_get] enter\n");
+
 	hndev = to_hn_dev(n);
+	uk_pr_info("[hn_dev_mtu_get] enter hndev->mtu: %u\n", hndev->mtu);
 	return hndev->mtu;
 }
 
@@ -1992,6 +2023,7 @@ static int hn_drv_add_dev(struct vmbus_device *vmbusdev)
 	}
 	hv->channels[0] = (struct vmbus_channel *)vmbusdev->priv;
 	hv->primary->chan = hv->channels[0];
+	hv->primary->hv = hv;
 
 	uk_pr_debug("[hn_drv_add_dev] hv->primary: %p, hv->channels[0]: %p\n", hv->primary, hv->channels[0]);
 
@@ -2058,16 +2090,14 @@ static int hn_drv_add_dev(struct vmbus_device *vmbusdev)
 	}
 
 	hv->chim_res.phys_addr = chim_gpadl;
-
 	/* END */
-
 
 	err = hn_attach(hv, RTE_ETHER_MTU);
 	uk_pr_debug("[hn_drv_add_dev] hn_attach err: %d\n", err);
 	if  (err)
 		goto failed;
 
-	err = hn_chim_init(hndev);
+	err = hn_chim_init(&hndev->netdev);
 	if (err)
 		goto failed;
 
@@ -2075,6 +2105,11 @@ static int hn_drv_add_dev(struct vmbus_device *vmbusdev)
 	//	if (err)
 	//		goto failed;
 
+	err = hn_rndis_get_eaddr(hv, hndev->hw_addr.addr_bytes);
+	if (err)
+		goto failed;
+
+	uk_pr_debug("hn_drv_add_dev] uk_alloc_availmem: %d, uk_alloc_pavailmem: %d\n", uk_alloc_availmem(drv_allocator), uk_alloc_pavailmem(drv_allocator));
 
 	rc = uk_netdev_drv_register(&hndev->netdev, drv_allocator, DRIVER_NAME);
 	if (rc < 0) {
@@ -2082,6 +2117,16 @@ static int hn_drv_add_dev(struct vmbus_device *vmbusdev)
 			DRIVER_NAME);
 		goto err_register;
 	}
+
+	uk_pr_debug("[hn_drv_add_dev] Before offload\n");
+	err = hn_rndis_conf_offload(hv, 0, 0);
+	if (err) {
+		uk_pr_info(
+			    "offload configure failed: %d", err);
+		goto out;
+	}
+	uk_pr_debug("[hn_drv_add_dev] After offload\n");
+
 	hndev->uid = rc;	
 	rc = 0;
 
@@ -2094,7 +2139,6 @@ static int hn_drv_add_dev(struct vmbus_device *vmbusdev)
 	// }
 
 	// return ret;
-
 
 	uk_pr_info("[hn_drv_add_dev] end\n");
 out:

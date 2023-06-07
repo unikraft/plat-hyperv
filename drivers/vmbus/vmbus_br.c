@@ -554,6 +554,7 @@ vmbus_rxbr_peek(struct vmbus_rxbr *rbr, void *data, int dlen)
 {
 	mtx_lock_spin(&rbr->rxbr_lock);
 
+	uk_pr_info("[vmbus_rxbr_peek] begin dlen: %d\n", dlen);
 	/*
 	 * The requested data and the 64bits channel packet
 	 * offset should be there at least.

@@ -79,8 +79,8 @@ struct vmbus_txbr {
 #define txbr_data		txbr.vbr_data
 #define txbr_dsize		txbr.vbr_dsize
 
-struct sysctl_ctx_list;
-struct sysctl_oid;
+// struct sysctl_ctx_list;
+// struct sysctl_oid;
 
 static __inline int
 vmbus_txbr_maxpktsz(const struct vmbus_txbr *tbr)
@@ -119,9 +119,9 @@ vmbus_br_nelem(int br_size, int elem_size)
 	return (br_size / elem_size);
 }
 
-void		vmbus_br_sysctl_create(struct sysctl_ctx_list *ctx,
-		    struct sysctl_oid *br_tree, struct vmbus_br *br,
-		    const char *name);
+// void		vmbus_br_sysctl_create(struct sysctl_ctx_list *ctx,
+// 		    struct sysctl_oid *br_tree, struct vmbus_br *br,
+// 		    const char *name);
 
 void		vmbus_rxbr_init(struct vmbus_rxbr *rbr);
 void		vmbus_rxbr_deinit(struct vmbus_rxbr *rbr);

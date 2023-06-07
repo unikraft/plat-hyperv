@@ -108,7 +108,9 @@ void *hyperv_mem_alloc(struct uk_alloc *a, size_t size)
 	unsigned long num_pages;
 	num_pages = size_to_num_pages(size);
 	// TODO: Allocate the exact size, PAGE_SIZE aligned.
-	return uk_palloc(a, num_pages);
+	void *ptr = uk_palloc(a, num_pages);
+	uk_pr_debug("[hyperv_mem] ptr: %p\n", ptr);
+	return ptr;
 }
 u_int
 hyperv_get_timecount()

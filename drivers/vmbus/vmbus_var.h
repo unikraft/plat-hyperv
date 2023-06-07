@@ -125,6 +125,8 @@ struct vmbus_softc {
 	__paddr_t		vmbus_mnf2_paddr;
 
 	bool			vmbus_scandone;
+	uint32_t        vmbus_scancount;
+	bool            vmbus_probedone;
 	struct uk_waitq vmbus_scandone_wq;
 	struct task		vmbus_scandone_task;
 

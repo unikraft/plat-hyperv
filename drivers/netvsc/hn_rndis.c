@@ -56,10 +56,21 @@ static void *hn_rndis_alloc(size_t size)
 	unsigned long num_pages;
 	num_pages = size_to_num_pages(size);
 	// TODO: Allocate the exact size, PAGE_SIZE aligned.
-	return uk_palloc(uk_alloc_get_default(), num_pages);
+	//uk_pr_info("[hn_rndis_alloc] size: %d, num_pages: %d\n", size, num_pages);
+	void *ptr =  uk_palloc(uk_alloc_get_default(), num_pages);
+	uk_pr_info("[hn_rndis_alloc] ptr: %p, size: %d, num_pages: %d\n", ptr, size, num_pages);
+	return ptr;
 }
 
-//#define RTE_LIBRTE_NETVSC_DEBUG_DUMP
+static void hn_rndis_free(void *ptr, size_t size)
+{
+	// return rte_zmalloc("RNDIS", size, rte_mem_page_size());
+	unsigned long num_pages;
+	num_pages = size_to_num_pages(size);
+	// TODO: Allocate the exact size, PAGE_SIZE aligned.
+	uk_pfree(uk_alloc_get_default(), ptr, num_pages);
+}
+
 #ifdef RTE_LIBRTE_NETVSC_DEBUG_DUMP
 void hn_rndis_dump(const void *buf)
 {
@@ -85,8 +96,8 @@ void hn_rndis_dump(const void *buf)
 		const struct rndis_pktinfo *ppi;
 		unsigned int ppi_len;
 
-		rte_log(RTE_LOG_DEBUG, hn_logtype_driver,
-			    "RNDIS_MSG_PACKET (len %u, data %u:%u, # oob %u %u:%u, pkt %u:%u)\n",
+		// rte_log(RTE_LOG_DEBUG, hn_logtype_driver,
+		uk_pr_debug("RNDIS_MSG_PACKET (len %u, data %u:%u, # oob %u %u:%u, pkt %u:%u)\n",
 			    rndis_msg->pkt.len,
 			    rndis_msg->pkt.dataoffset,
 			    rndis_msg->pkt.datalen,
@@ -106,7 +117,8 @@ void hn_rndis_dump(const void *buf)
 
 			ppi_data = ppi->data;
 
-			rte_log(RTE_LOG_DEBUG, hn_logtype_driver,
+			// rte_log(RTE_LOG_DEBUG, hn_logtype_driver,
+			uk_pr_debug(
 				"    PPI (size %u, type %u, offs %u data %#x)\n",
 				ppi->size, ppi->type, ppi->offset,
 				*(const uint32_t *)ppi_data);
@@ -119,7 +131,8 @@ void hn_rndis_dump(const void *buf)
 		break;
 	}
 	case RNDIS_INITIALIZE_MSG:
-		rte_log(RTE_LOG_DEBUG, hn_logtype_driver,
+		// rte_log(RTE_LOG_DEBUG, hn_logtype_driver,
+		uk_pr_debug(
 			    "RNDIS_MSG_INIT (len %u id %#x, ver %u.%u max xfer %u)\n",
 			    rndis_msg->init_request.len,
 			    rndis_msg->init_request.rid,
@@ -129,7 +142,8 @@ void hn_rndis_dump(const void *buf)
 		break;
 
 	case RNDIS_INITIALIZE_CMPLT:
-		rte_log(RTE_LOG_DEBUG, hn_logtype_driver,
+		// rte_log(RTE_LOG_DEBUG, hn_logtype_driver,
+		uk_pr_debug(
 			    "RNDIS_MSG_INIT_C (len %u, id %#x, status 0x%x, vers %u.%u, "
 			    "flags %d, max xfer %u, max pkts %u, aligned %u)\n",
 			    rndis_msg->init_complete.len,
@@ -144,13 +158,15 @@ void hn_rndis_dump(const void *buf)
 		break;
 
 	case RNDIS_HALT_MSG:
-		rte_log(RTE_LOG_DEBUG, hn_logtype_driver,
+		// rte_log(RTE_LOG_DEBUG, hn_logtype_driver,
+		uk_pr_debug(
 			    "RNDIS_HALT (len %u id %#x)\n",
 			    rndis_msg->halt.len, rndis_msg->halt.rid);
 		break;
 
 	case RNDIS_QUERY_MSG:
-		rte_log(RTE_LOG_DEBUG, hn_logtype_driver,
+		// rte_log(RTE_LOG_DEBUG, hn_logtype_driver,
+		uk_pr_debug(
 			    "RNDIS_QUERY (len %u, id %#x, oid %#x, info %u:%u)\n",
 			    rndis_msg->query_request.len,
 			    rndis_msg->query_request.rid,
@@ -160,7 +176,8 @@ void hn_rndis_dump(const void *buf)
 		break;
 
 	case RNDIS_QUERY_CMPLT:
-		rte_log(RTE_LOG_DEBUG, hn_logtype_driver,
+		// rte_log(RTE_LOG_DEBUG, hn_logtype_driver,
+		uk_pr_debug(
 			    "RNDIS_MSG_QUERY_C (len %u, id %#x, status 0x%x, buf %u:%u)\n",
 			    rndis_msg->query_complete.len,
 			    rndis_msg->query_complete.rid,
@@ -170,7 +187,8 @@ void hn_rndis_dump(const void *buf)
 		break;
 
 	case RNDIS_SET_MSG:
-		rte_log(RTE_LOG_DEBUG, hn_logtype_driver,
+		// rte_log(RTE_LOG_DEBUG, hn_logtype_driver,
+		uk_pr_debug(
 			    "RNDIS_SET (len %u, id %#x, oid %#x, info %u:%u)\n",
 			    rndis_msg->set_request.len,
 			    rndis_msg->set_request.rid,
@@ -180,7 +198,8 @@ void hn_rndis_dump(const void *buf)
 		break;
 
 	case RNDIS_SET_CMPLT:
-		rte_log(RTE_LOG_DEBUG, hn_logtype_driver,
+		// rte_log(RTE_LOG_DEBUG, hn_logtype_driver,
+		uk_pr_debug(
 			    "RNDIS_MSG_SET_C (len %u, id 0x%x, status 0x%x)\n",
 			    rndis_msg->set_complete.len,
 			    rndis_msg->set_complete.rid,
@@ -188,7 +207,8 @@ void hn_rndis_dump(const void *buf)
 		break;
 
 	case RNDIS_INDICATE_STATUS_MSG:
-		rte_log(RTE_LOG_DEBUG, hn_logtype_driver,
+		// rte_log(RTE_LOG_DEBUG, hn_logtype_driver,
+		uk_pr_debug(
 			    "RNDIS_MSG_INDICATE (len %u, status %#x, buf len %u, buf offset %u)\n",
 			    rndis_msg->indicate_status.len,
 			    rndis_msg->indicate_status.status,
@@ -197,14 +217,16 @@ void hn_rndis_dump(const void *buf)
 		break;
 
 	case RNDIS_RESET_MSG:
-		rte_log(RTE_LOG_DEBUG, hn_logtype_driver,
+		// rte_log(RTE_LOG_DEBUG, hn_logtype_driver,
+		uk_pr_debug(
 			    "RNDIS_RESET (len %u, id %#x)\n",
 			    rndis_msg->reset_request.len,
 			    rndis_msg->reset_request.rid);
 		break;
 
 	case RNDIS_RESET_CMPLT:
-		rte_log(RTE_LOG_DEBUG, hn_logtype_driver,
+		// rte_log(RTE_LOG_DEBUG, hn_logtype_driver,
+		uk_pr_debug(
 			    "RNDIS_RESET_C (len %u, status %#x address %#x)\n",
 			    rndis_msg->reset_complete.len,
 			    rndis_msg->reset_complete.status,
@@ -212,14 +234,16 @@ void hn_rndis_dump(const void *buf)
 		break;
 
 	case RNDIS_KEEPALIVE_MSG:
-		rte_log(RTE_LOG_DEBUG, hn_logtype_driver,
+		// rte_log(RTE_LOG_DEBUG, hn_logtype_driver,
+		uk_pr_debug(
 			    "RNDIS_KEEPALIVE (len %u, id %#x)\n",
 			    rndis_msg->keepalive_request.len,
 			    rndis_msg->keepalive_request.rid);
 		break;
 
 	case RNDIS_KEEPALIVE_CMPLT:
-		rte_log(RTE_LOG_DEBUG, hn_logtype_driver,
+		// rte_log(RTE_LOG_DEBUG, hn_logtype_driver,
+		uk_pr_debug(
 			    "RNDIS_KEEPALIVE_C (len %u, id %#x address %#x)\n",
 			    rndis_msg->keepalive_complete.len,
 			    rndis_msg->keepalive_complete.rid,
@@ -227,7 +251,8 @@ void hn_rndis_dump(const void *buf)
 		break;
 
 	default:
-		rte_log(RTE_LOG_DEBUG, hn_logtype_driver,
+		// rte_log(RTE_LOG_DEBUG, hn_logtype_driver,
+		uk_pr_debug(
 			    "RNDIS type %#x len %u\n",
 			    rndis_msg->hdr.type,
 			    rndis_msg->hdr.len);
@@ -252,23 +277,24 @@ static int hn_nvs_send_rndis_ctrl(struct vmbus_channel *chan,
 	rte_iova_t addr;
 
 	addr = rte_malloc_virt2iova(req);
+	uk_pr_debug("[hn_nvs_send_rndis_ctrl] req: %p, addr: %p\n", req, addr);
 	if (unlikely(addr == RTE_BAD_IOVA)) {
-		uk_pr_err("RNDIS send request can not get iova");
+		uk_pr_err("RNDIS send request can not get iova\n");
 		return -EINVAL;
 	}
 
 	if (unlikely(reqlen > rte_mem_page_size())) {
-		uk_pr_err("RNDIS request %u greater than page size",
+		uk_pr_err("RNDIS request %u greater than page size\n",
 			    reqlen);
 		return -EINVAL;
 	}
 
 	sg.page = addr / rte_mem_page_size();
-	// sg.ofs  = addr & PAGE_MASK;
+	//sg.ofs  = addr & PAGE_MASK;
 	sg.ofs = addr & (rte_mem_page_size() - 1);
 	sg.len  = reqlen;
 
-	uk_pr_info("[hn_nvs_send_rndis_ctrl] sg.ofs: %u, reqlen: %u, rte_mem_page_size: %u\n", sg.ofs, reqlen, rte_mem_page_size());
+	uk_pr_info("[hn_nvs_send_rndis_ctrl] req: %p, addr: %p, sg.ofs: %u, reqlen: %u, rte_mem_page_size: %u\n", req, addr, sg.ofs, reqlen, rte_mem_page_size());
 	if (sg.ofs + reqlen > rte_mem_page_size()) {
 		uk_pr_err("RNDIS request crosses page boundary");
 		return -EINVAL;
@@ -322,6 +348,8 @@ void hn_rndis_receive_response(struct hn_data *hv,
 {
 	const struct rndis_init_comp *hdr = data;
 
+	uk_pr_info("[hn_rndis_receive_response] begin hv: %p, len: %u\n", hv, len);
+
 	hn_rndis_dump(data);
 
 	if (len < sizeof(3 * sizeof(uint32_t))) {
@@ -370,34 +398,34 @@ static int hn_rndis_exec1(struct hn_data *hv,
 	struct vmbus_channel *chan = hn_primary_chan(hv);
 	int error;
 
-	uk_pr_info("[[hn_rndis_exec1] begin\n");
+	uk_pr_info("[hn_rndis_exec1] begin\n");
 
 	if (comp_len > sizeof(hv->rndis_resp)) {
 		uk_pr_warn(
-			    "Expected completion size %u exceeds buffer %zu",
+			    "Expected completion size %u exceeds buffer %zu\n",
 			    comp_len, sizeof(hv->rndis_resp));
 		return -EIO;
 	}
 
 	if (rid == 0) {
-		uk_pr_err("Invalid request id");
+		uk_pr_err("Invalid request id\n");
 		return -EINVAL;
 	}
 
 	if (comp != NULL &&
 	    rte_atomic32_cmpset(&hv->rndis_pending, 0, rid) == 0) {
 		uk_pr_err(
-			    "Request already pending");
+			    "Request already pending\n");
 		return -EBUSY;
 	}
 
 	error = hn_nvs_send_rndis_ctrl(chan, req, reqlen);
 	if (error) {
-		uk_pr_err("RNDIS ctrl send failed: %d", error);
+		uk_pr_err("RNDIS ctrl send failed: %d\n", error);
 		return error;
 	}
 
-	uk_pr_info("[[hn_rndis_exec1] after hn_nvs_send_rndis_ctrl\n");
+	uk_pr_info("[hn_rndis_exec1] after hn_nvs_send_rndis_ctrl\n");
 
 	if (comp) {
 		time_t start = time(NULL);
@@ -410,7 +438,7 @@ static int hn_rndis_exec1(struct hn_data *hv,
 			uk_pr_info("[hn_rndis_exec] time: %ld\n", time(NULL));
 			if (time(NULL) - start > RNDIS_TIMEOUT_SEC) {
 				uk_pr_err(
-					    "RNDIS response timed out");
+					    "RNDIS response timed out\n");
 
 				rte_atomic32_cmpset(&hv->rndis_pending, rid, 0);
 				return -ETIMEDOUT;
@@ -420,13 +448,15 @@ static int hn_rndis_exec1(struct hn_data *hv,
 			if (vmbus_chan_rx_empty(hv->primary->chan))
 				rte_delay_ms(RNDIS_DELAY_MS);
 
+			uk_pr_info("[hn_rndis_exec1] Before hn_process_events()\n");
 			hn_process_events(hv, 0, 1);
+			uk_pr_info("[hn_rndis_exec1] After hn_process_events()\n");
 		}
 
 		memcpy(comp, hv->rndis_resp, comp_len);
 	}
 
-	uk_pr_info("[[hn_rndis_exec1] end\n");
+	uk_pr_info("[hn_rndis_exec1] end\n");
 
 	return 0;
 }
@@ -439,7 +469,7 @@ static int hn_rndis_execute(struct hn_data *hv, uint32_t rid,
 	const struct rndis_comp_hdr *hdr = comp;
 	int ret;
 
-	uk_pr_info("[hn_rndis_execute] begin\n");
+	uk_pr_info("[hn_rndis_execute] begin rid: %u\n", rid);
 
 	memset(comp, 0, comp_len);
 
@@ -452,14 +482,14 @@ static int hn_rndis_execute(struct hn_data *hv, uint32_t rid,
 	 */
 	if (unlikely(hdr->type != comp_type)) {
 		uk_pr_err(
-			    "unexpected RNDIS response complete %#x expect %#x",
+			    "unexpected RNDIS response complete %#x expect %#x\n",
 			    hdr->type, comp_type);
 
 		return -ENXIO;
 	}
 	if (unlikely(hdr->rid != rid)) {
 		uk_pr_err(
-			    "RNDIS comp rid mismatch %#x, expect %#x",
+			    "RNDIS comp rid mismatch %#x, expect %#x\n",
 			    hdr->rid, rid);
 		return -EINVAL;
 	}
@@ -482,14 +512,18 @@ hn_rndis_query(struct hn_data *hv, uint32_t oid,
 	unsigned int ofs;
 	uint32_t rid;
 
+	uk_pr_debug("[hn_rndis_query] enter\n");
+
 	reqlen = sizeof(*req) + idlen;
 	req = hn_rndis_alloc(reqlen);
+	uk_pr_debug("[hn_rndis_query] req: %p\n", req);
 	if (req == NULL)
 		return -ENOMEM;
 
 	comp_len = sizeof(*comp) + odlen;
 	// comp = rte_zmalloc("QUERY", comp_len, rte_mem_page_size());
 	comp = hn_rndis_alloc(comp_len);
+	uk_pr_debug("[hn_rndis_query] comp: %p\n", comp);
 	if (!comp) {
 		error = -ENOMEM;
 		goto done;
@@ -517,6 +551,7 @@ hn_rndis_query(struct hn_data *hv, uint32_t oid,
 	if (comp->status != RNDIS_STATUS_SUCCESS) {
 		uk_pr_err("RNDIS query 0x%08x failed: status 0x%08x",
 			    oid, comp->status);
+		
 		error = -EINVAL;
 		goto done;
 	}
@@ -549,10 +584,12 @@ hn_rndis_query(struct hn_data *hv, uint32_t oid,
 
 	error = 0;
 done:
+	uk_pr_info("[hn_rndis_query] before uk_free\n");
 	// rte_free(comp);
-	uk_free(uk_alloc_get_default(), comp);
+	hn_rndis_free(comp, comp_len);
 	// rte_free(req);
-	uk_free(uk_alloc_get_default(), req);
+	hn_rndis_free(req, reqlen);
+	uk_pr_info("[hn_rndis_query] end error: %d\n", error);
 	return error;
 }
 
@@ -586,6 +623,8 @@ hn_rndis_query_hwcaps(struct hn_data *hv, struct ndis_offload *caps)
 	uint32_t caps_len, size;
 	int error;
 
+	uk_pr_debug("[hn_rndis_query_hwcaps] begin\n");
+
 	memset(caps, 0, sizeof(*caps));
 	memset(&in, 0, sizeof(in));
 	in.ndis_hdr.ndis_type = NDIS_OBJTYPE_OFFLOAD;
@@ -603,7 +642,7 @@ hn_rndis_query_hwcaps(struct hn_data *hv, struct ndis_offload *caps)
 	in.ndis_hdr.ndis_size = size;
 
 	caps_len = NDIS_OFFLOAD_SIZE;
-	error = hn_rndis_query(hv, OID_TCP_OFFLOAD_HARDWARE_CAPABILITIES,
+	error = hn_rndis_query(hv, OID_TCP_OFFLOAD_HARDWARE_CAPABILITIES+0x123,
 			       &in, size, caps, caps_len);
 	if (error)
 		return error;
@@ -628,6 +667,8 @@ hn_rndis_query_hwcaps(struct hn_data *hv, struct ndis_offload *caps)
 			    caps->ndis_hdr.ndis_size);
 		return -EINVAL;
 	}
+
+	uk_pr_debug("[hn_rndis_query_hwcaps] end\n");
 
 	return 0;
 }
@@ -748,6 +789,8 @@ hn_rndis_set(struct hn_data *hv, uint32_t oid, const void *data, uint32_t dlen)
 	uint32_t rid;
 	int error;
 
+	uk_pr_debug("[hn_rndis_set] hn_rndis_set begin\n");
+
 	reqlen = sizeof(*req) + dlen;
 	// req = rte_zmalloc("RNDIS_SET", reqlen, rte_mem_page_size());
 	req = hn_rndis_alloc(reqlen);
@@ -787,33 +830,36 @@ hn_rndis_set(struct hn_data *hv, uint32_t oid, const void *data, uint32_t dlen)
 done:
 	// rte_free(req);
 	uk_free(uk_alloc_get_default(), req);
+	uk_pr_debug("[hn_rndis_set] hn_rndis_set end error: %d\n", error);
 	return error;
 }
 
-// int hn_rndis_conf_offload(struct hn_data *hv,
-// 			  uint64_t tx_offloads, uint64_t rx_offloads)
-// {
-// 	struct ndis_offload_params params;
-// 	struct ndis_offload hwcaps;
-// 	int error;
+int hn_rndis_conf_offload(struct hn_data *hv,
+			  uint64_t tx_offloads, uint64_t rx_offloads)
+{
+	struct ndis_offload_params params;
+	struct ndis_offload hwcaps;
+	int error;
 
-// 	error = hn_rndis_query_hwcaps(hv, &hwcaps);
-// 	if (error) {
-// 		uk_pr_err("hwcaps query failed: %d", error);
-// 		return error;
-// 	}
+	uk_pr_debug("[hn_rndis_conf_offload] begin\n");
 
-// 	/* NOTE: 0 means "no change" */
-// 	memset(&params, 0, sizeof(params));
+	error = hn_rndis_query_hwcaps(hv, &hwcaps);
+	if (error) {
+		uk_pr_err("hwcaps query failed: %d", error);
+		return error;
+	}
 
-// 	params.ndis_hdr.ndis_type = NDIS_OBJTYPE_DEFAULT;
-// 	if (hv->ndis_ver < NDIS_VERSION_6_30) {
-// 		params.ndis_hdr.ndis_rev = NDIS_OFFLOAD_PARAMS_REV_2;
-// 		params.ndis_hdr.ndis_size = NDIS_OFFLOAD_PARAMS_SIZE_6_1;
-// 	} else {
-// 		params.ndis_hdr.ndis_rev = NDIS_OFFLOAD_PARAMS_REV_3;
-// 		params.ndis_hdr.ndis_size = NDIS_OFFLOAD_PARAMS_SIZE;
-// 	}
+	/* NOTE: 0 means "no change" */
+	memset(&params, 0, sizeof(params));
+
+	params.ndis_hdr.ndis_type = NDIS_OBJTYPE_DEFAULT;
+	if (hv->ndis_ver < NDIS_VERSION_6_30) {
+		params.ndis_hdr.ndis_rev = NDIS_OFFLOAD_PARAMS_REV_2;
+		params.ndis_hdr.ndis_size = NDIS_OFFLOAD_PARAMS_SIZE_6_1;
+	} else {
+		params.ndis_hdr.ndis_rev = NDIS_OFFLOAD_PARAMS_REV_3;
+		params.ndis_hdr.ndis_size = NDIS_OFFLOAD_PARAMS_SIZE;
+	}
 
 // 	if (tx_offloads & RTE_ETH_TX_OFFLOAD_TCP_CKSUM) {
 // 		if (hwcaps.ndis_csum.ndis_ip4_txcsum & NDIS_TXCSUM_CAP_TCP4)
@@ -893,20 +939,22 @@ done:
 // 			goto unsupported;
 // 	}
 
-// 	error = hn_rndis_set(hv, OID_TCP_OFFLOAD_PARAMETERS, &params,
-// 			     params.ndis_hdr.ndis_size);
-// 	if (error) {
-// 		uk_pr_err("offload config failed");
-// 		return error;
-// 	}
+	error = hn_rndis_set(hv, OID_TCP_OFFLOAD_PARAMETERS, &params,
+			     params.ndis_hdr.ndis_size);
+	if (error) {
+		uk_pr_err("offload config failed");
+		return error;
+	}
 
-// 	return 0;
-//  unsupported:
-// 	uk_pr_warn(
-// 		    "offload tx:%" PRIx64 " rx:%" PRIx64 " not supported by this version",
-// 		    tx_offloads, rx_offloads);
-// 	return -EINVAL;
-// }
+	uk_pr_debug("[hn_rndis_conf_offload] end\n");
+
+	return 0;
+ unsupported:
+	uk_pr_warn(
+		    "offload tx:%" PRIx64 " rx:%" PRIx64 " not supported by this version",
+		    tx_offloads, rx_offloads);
+	return -EINVAL;
+}
 
 // int hn_rndis_get_offload(struct hn_data *hv,
 // 			 struct rte_eth_dev_info *dev_info)
@@ -997,15 +1045,18 @@ hn_rndis_set_rxfilter(struct hn_data *hv, uint32_t filter)
 {
 	int error;
 
+	uk_pr_info("[hn_rndis_set_rxfilter] enter\n");
+
 	error = hn_rndis_set(hv, OID_GEN_CURRENT_PACKET_FILTER,
 			     &filter, sizeof(filter));
 	if (error) {
-		uk_pr_err("set RX filter %#" PRIx32 " failed: %d",
+		uk_pr_err("set RX filter %#" PRIx32 " failed: %d\n",
 			    filter, error);
 	} else {
-		uk_pr_debug("set RX filter %#" PRIx32 " done", filter);
+		uk_pr_debug("set RX filter %#" PRIx32 " done\n", filter);
 	}
 
+	uk_pr_info("hn_rndis_set_rxfilter] end error: %d\n", error);
 	return error;
 }
 
@@ -1052,6 +1103,7 @@ static int hn_rndis_init(struct hn_data *hv)
 	int error;
 
 	uk_pr_info("[hn_rndis_init] begin\n");
+	uk_pr_info("[hn_rndis_init] ch_id: %u, ch_rxbr: %p\n", hv->primary->chan->ch_id, hv->primary->chan->ch_rxbr);
 
 	req = hn_rndis_alloc(sizeof(*req));
 	if (!req) {
@@ -1119,15 +1171,19 @@ hn_rndis_get_eaddr(struct hn_data *hv, uint8_t *eaddr)
 	uint32_t eaddr_len;
 	int error;
 
+	uk_pr_info("[hn_rndis_get_eaddr] enter\n");
+
 	eaddr_len = RTE_ETHER_ADDR_LEN;
 	error = hn_rndis_query(hv, OID_802_3_PERMANENT_ADDRESS, NULL, 0,
 			       eaddr, eaddr_len);
+	uk_pr_info("[hn_rndis_get_eaddr] error: %d\n", error);
 	if (error)
 		return error;
 
-	uk_pr_info("MAC address " RTE_ETHER_ADDR_PRT_FMT,
+	uk_pr_info("MAC address " RTE_ETHER_ADDR_PRT_FMT "\n",
 		    eaddr[0], eaddr[1], eaddr[2],
 		    eaddr[3], eaddr[4], eaddr[5]);
+	uk_pr_info("[hn_rndis_get_eaddr] end\n");
 	return 0;
 }
 

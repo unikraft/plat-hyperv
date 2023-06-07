@@ -101,7 +101,6 @@ struct vmbus_chanpkt_hdr {
 #define VMBUS_CHANPKT_FLAG_NONE		0
 #define VMBUS_CHANPKT_FLAG_RC		0x0001	/* report completion */
 
-#if 0
 #define VMBUS_CHANPKT_CONST_DATA(pkt)		\
 	(const void *)((const uint8_t *)(pkt) +	\
 	VMBUS_CHANPKT_GETLEN((pkt)->cph_hlen))
@@ -110,7 +109,6 @@ struct vmbus_chanpkt_hdr {
 #define VMBUS_CHANPKT_DATALEN(pkt)		\
 	(VMBUS_CHANPKT_GETLEN((pkt)->cph_tlen) -\
 	 VMBUS_CHANPKT_GETLEN((pkt)->cph_hlen))
-#endif
 
 struct vmbus_rxbuf_desc {
 	uint32_t	rb_len;
@@ -221,8 +219,11 @@ void		vmbus_chan_cpu_set(struct vmbus_channel *chan, int cpu);
 // 		    int subchan_cnt);
 // void		vmbus_subchan_drain(struct vmbus_channel *pri_chan);
 
+void vmbus_chan_signal_read(struct vmbus_channel *chan, uint32_t bytes_read);
+
 int		vmbus_chan_recv(struct vmbus_channel *chan, void *data, int *dlen,
 		    uint64_t *xactid);
+int		vmbus_chan_recv_raw(struct vmbus_channel *chan, void *data, uint32_t *len);
 // int		vmbus_chan_recv_pkt(struct vmbus_channel *chan,
 // 		    struct vmbus_chanpkt_hdr *pkt, int *pktlen);
 

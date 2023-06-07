@@ -26,7 +26,6 @@
 	(sizeof(struct vmbus_chanpkt_hdr) + sizeof(struct hn_nvs_rndis))
 
 #define HN_TXD_CACHE_SIZE	32 /* per cpu tx_descriptor pool cache */
-#define HN_RXQ_EVENT_DEFAULT	2048
 
 struct hn_rxinfo {
 	uint32_t	vlan_info;
@@ -49,14 +48,15 @@ struct hn_rxinfo {
 #define HN_NDIS_RXCSUM_INFO_INVALID	0
 #define HN_NDIS_HASH_INFO_INVALID	0
 
-#define HN_RNDIS_PKT_LEN				\
-	(sizeof(struct rndis_packet_msg) +		\
-	 RNDIS_PKTINFO_SIZE(NDIS_HASH_VALUE_SIZE) +	\
-	 RNDIS_PKTINFO_SIZE(NDIS_VLAN_INFO_SIZE) +	\
-	 RNDIS_PKTINFO_SIZE(NDIS_LSO2_INFO_SIZE) +	\
-	 RNDIS_PKTINFO_SIZE(NDIS_TXCSUM_INFO_SIZE))
+//#define HN_RNDIS_PKT_LEN				\
+// 	(sizeof(struct rndis_packet_msg) +		\
+//	 RNDIS_PKTINFO_SIZE(NDIS_HASH_VALUE_SIZE) +	\
+//	 RNDIS_PKTINFO_SIZE(NDIS_VLAN_INFO_SIZE) +	\
+//	 RNDIS_PKTINFO_SIZE(NDIS_LSO2_INFO_SIZE) +	\
+//	 RNDIS_PKTINFO_SIZE(NDIS_TXCSUM_INFO_SIZE))
 
-#define HN_RNDIS_PKT_ALIGNED	RTE_ALIGN(HN_RNDIS_PKT_LEN, RTE_CACHE_LINE_SIZE)
+/* Moved to hn_var.h */
+//#define HN_RNDIS_PKT_ALIGNED	RTE_ALIGN(HN_RNDIS_PKT_LEN, RTE_CACHE_LINE_SIZE)
 
 /* Minimum space required for a packet */
 #define HN_PKTSIZE_MIN(align) \
@@ -109,17 +109,21 @@ hn_rndis_pktmsg_offset(uint32_t ofs)
 
 // static void hn_txd_init(struct rte_mempool *mp __rte_unused,
 // 			void *opaque, void *obj, unsigned int idx)
-// {
-// 	struct hn_tx_queue *txq = opaque;
-// 	struct hn_txdesc *txd = obj;
+static void hn_txd_init(struct uk_netdev_tx_queue *txq, struct hn_txdesc *txd)
+{
+	memset(txd, 0, sizeof(*txd));
 
-// 	memset(txd, 0, sizeof(*txd));
-
-// 	txd->queue_id = txq->queue_id;
-// 	txd->chim_index = NVS_CHIM_IDX_INVALID;
+	txd->queue_id = txq->queue_id;
+	txd->chim_index = NVS_CHIM_IDX_INVALID;
 // 	txd->rndis_pkt = (struct rndis_packet_msg *)((char *)txq->tx_rndis
 // 		+ idx * HN_RNDIS_PKT_ALIGNED);
-// }
+	txd->rndis_pkt = uk_allocpool_take(txq->tx_rndis_pool);
+}
+
+static void hn_txd_uninit(struct uk_netdev_tx_queue *txq, struct hn_txdesc *txd)
+{
+	uk_allocpool_return(txq->tx_rndis_pool, txd->rndis_pkt);
+}
 
 // int
 // hn_chim_init(struct rte_eth_dev *dev)
@@ -131,26 +135,29 @@ hn_chim_init(struct uk_netdev *dev)
 	struct hn_data *hv = hndev->dev_private;
 	uint32_t i, chim_bmp_size;
 
-// 	rte_spinlock_init(&hv->chim_lock);
-	uk_spin_init(&hv->chim_lock);
-// 	chim_bmp_size = rte_bitmap_get_memory_footprint(hv->chim_cnt);
-// 	hv->chim_bmem = rte_zmalloc("hn_chim_bitmap", chim_bmp_size,
-// 				    RTE_CACHE_LINE_SIZE);
-// 	if (hv->chim_bmem == NULL) {
-// 		PMD_INIT_LOG(ERR, "failed to allocate bitmap size %u",
-// 			     chim_bmp_size);
-// 		return -1;
-// 	}
+	rte_spinlock_init(&hv->chim_lock);
+	// chim_bmp_size = rte_bitmap_get_memory_footprint(hv->chim_cnt);
+	// hv->chim_bmem = rte_zmalloc("hn_chim_bitmap", chim_bmp_size,
+	// 			    RTE_CACHE_LINE_SIZE);
+	// if (hv->chim_bmem == NULL) {
+	// 	PMD_INIT_LOG(ERR, "failed to allocate bitmap size %u",
+	// 		     chim_bmp_size);
+	// 	return -1;
+	// }
 
 // 	hv->chim_bmap = rte_bitmap_init(hv->chim_cnt,
 // 					hv->chim_bmem, chim_bmp_size);
-// 	if (hv->chim_bmap == NULL) {
+	chim_bmp_size = (hv->chim_cnt / 8) + 1;
+	hv->chim_bmap = uk_malloc(hv->a, chim_bmp_size);
+	if (hv->chim_bmap == NULL) {
 // 		PMD_INIT_LOG(ERR, "failed to init chim bitmap");
-// 		return -1;
-// 	}
+		uk_pr_err("failed to init chim bitmap\n");
+		return -1;
+	}
+	uk_bitmap_zero(hv->chim_bmap, hv->chim_cnt);
 
-// 	for (i = 0; i < hv->chim_cnt; i++)
-// 		rte_bitmap_set(hv->chim_bmap, i);
+	for (i = 0; i < hv->chim_cnt; i++)
+		rte_bitmap_set(hv->chim_bmap, i);
 
 	return 0;
 }
@@ -180,16 +187,17 @@ hn_chim_init(struct uk_netdev *dev)
 // 	return index;
 // }
 
-// static void hn_chim_free(struct hn_data *hv, uint32_t chim_idx)
-// {
-// 	if (chim_idx >= hv->chim_cnt) {
-// 		PMD_DRV_LOG(ERR, "Invalid chimney index %u", chim_idx);
-// 	} else {
-// 		rte_spinlock_lock(&hv->chim_lock);
-// 		rte_bitmap_set(hv->chim_bmap, chim_idx);
-// 		rte_spinlock_unlock(&hv->chim_lock);
-// 	}
-// }
+static void hn_chim_free(struct hn_data *hv, uint32_t chim_idx)
+{
+	if (chim_idx >= hv->chim_cnt) {
+		// PMD_DRV_LOG(ERR, "Invalid chimney index %u", chim_idx);
+		uk_pr_err("Invalid chimney index %u", chim_idx);
+	} else {
+		rte_spinlock_lock(&hv->chim_lock);
+		rte_bitmap_set(hv->chim_bmap, chim_idx);
+		rte_spinlock_unlock(&hv->chim_lock);
+	}
+}
 
 // static void hn_reset_txagg(struct hn_tx_queue *txq)
 static void hn_reset_txagg(struct uk_netdev_tx_queue *txq)
@@ -316,6 +324,8 @@ static struct hn_txdesc *hn_txd_get(struct uk_netdev_tx_queue *txq)
 	txd->data_size = 0;
 	txd->chim_size = 0;
 
+	hn_txd_init(txq, txd);
+
 	return txd;
 }
 
@@ -324,6 +334,8 @@ static void hn_txd_put(struct uk_netdev_tx_queue *txq, struct hn_txdesc *txd)
 {
 	//rte_mempool_put(txq->txdesc_pool, txd);
 	uk_allocpool_return(txq->txdesc_pool, (void *)txd);
+	
+	hn_txd_uninit(txq, txd);
 }
 
 // void
@@ -372,21 +384,28 @@ hn_nvs_send_completed(struct rte_eth_dev *dev, uint16_t queue_id,
 	// struct hn_data *hv = dev->data->dev_private;
 	struct hn_data *hv = dev->dev_private;
 	struct hn_txdesc *txd = (struct hn_txdesc *)xactid;
-	struct hn_tx_queue *txq;
+	// struct hn_tx_queue *txq;
+	struct uk_netdev_rx_queue *txq;
+
+	uk_pr_debug("[hn_nvs_send_completed] xactid: %lu, ack->status: %u\n", xactid, ack->status);
 
 	/* Control packets are sent with xacid == 0 */
 	if (!txd)
 		return;
 
-	txq = dev->data->tx_queues[queue_id];
+	// txq = dev->data->tx_queues[queue_id];
+	txq = &dev->txqs[queue_id];
+
 	if (likely(ack->status == NVS_STATUS_OK)) {
-		PMD_TX_LOG(DEBUG, "port %u:%u complete tx %u packets %u bytes %u",
+		// PMD_TX_LOG(DEBUG, "port %u:%u complete tx %u packets %u bytes %u",
+		uk_pr_debug("port %u:%u complete tx %u packets %u bytes %u",
 			   txq->port_id, txq->queue_id, txd->chim_index,
 			   txd->packets, txd->data_size);
 		txq->stats.bytes += txd->data_size;
 		txq->stats.packets += txd->packets;
 	} else {
-		PMD_DRV_LOG(NOTICE, "port %u:%u complete tx %u failed status %u",
+		// PMD_DRV_LOG(NOTICE, "port %u:%u complete tx %u failed status %u",
+		uk_pr_warn("port %u:%u complete tx %u failed status %u",
 			    txq->port_id, txq->queue_id, txd->chim_index, ack->status);
 		++txq->stats.errors;
 	}
@@ -396,7 +415,7 @@ hn_nvs_send_completed(struct rte_eth_dev *dev, uint16_t queue_id,
 		txd->chim_index = NVS_CHIM_IDX_INVALID;
 	}
 
-	rte_pktmbuf_free(txd->m);
+	//rte_pktmbuf_free(txd->m);
 	hn_txd_put(txq, txd);
 }
 
@@ -421,81 +440,81 @@ hn_nvs_handle_comp(struct rte_eth_dev *dev, uint16_t queue_id,
 	}
 }
 
-// /* Parse per-packet info (meta data) */
-// static int
-// hn_rndis_rxinfo(const void *info_data, unsigned int info_dlen,
-// 		struct hn_rxinfo *info)
-// {
-// 	const struct rndis_pktinfo *pi = info_data;
-// 	uint32_t mask = 0;
+/* Parse per-packet info (meta data) */
+static int
+hn_rndis_rxinfo(const void *info_data, unsigned int info_dlen,
+		struct hn_rxinfo *info)
+{
+	const struct rndis_pktinfo *pi = info_data;
+	uint32_t mask = 0;
 
-// 	while (info_dlen != 0) {
-// 		const void *data;
-// 		uint32_t dlen;
+	while (info_dlen != 0) {
+		const void *data;
+		uint32_t dlen;
 
-// 		if (unlikely(info_dlen < sizeof(*pi)))
-// 			return -EINVAL;
+		if (unlikely(info_dlen < sizeof(*pi)))
+			return -EINVAL;
 
-// 		if (unlikely(info_dlen < pi->size))
-// 			return -EINVAL;
-// 		info_dlen -= pi->size;
+		if (unlikely(info_dlen < pi->size))
+			return -EINVAL;
+		info_dlen -= pi->size;
 
-// 		if (unlikely(pi->size & RNDIS_PKTINFO_SIZE_ALIGNMASK))
-// 			return -EINVAL;
-// 		if (unlikely(pi->size < pi->offset))
-// 			return -EINVAL;
+		if (unlikely(pi->size & RNDIS_PKTINFO_SIZE_ALIGNMASK))
+			return -EINVAL;
+		if (unlikely(pi->size < pi->offset))
+			return -EINVAL;
 
-// 		dlen = pi->size - pi->offset;
-// 		data = pi->data;
+		dlen = pi->size - pi->offset;
+		data = pi->data;
 
-// 		switch (pi->type) {
-// 		case NDIS_PKTINFO_TYPE_VLAN:
-// 			if (unlikely(dlen < NDIS_VLAN_INFO_SIZE))
-// 				return -EINVAL;
-// 			info->vlan_info = *((const uint32_t *)data);
-// 			mask |= HN_RXINFO_VLAN;
-// 			break;
+		switch (pi->type) {
+		case NDIS_PKTINFO_TYPE_VLAN:
+			if (unlikely(dlen < NDIS_VLAN_INFO_SIZE))
+				return -EINVAL;
+			info->vlan_info = *((const uint32_t *)data);
+			mask |= HN_RXINFO_VLAN;
+			break;
 
-// 		case NDIS_PKTINFO_TYPE_CSUM:
-// 			if (unlikely(dlen < NDIS_RXCSUM_INFO_SIZE))
-// 				return -EINVAL;
-// 			info->csum_info = *((const uint32_t *)data);
-// 			mask |= HN_RXINFO_CSUM;
-// 			break;
+		case NDIS_PKTINFO_TYPE_CSUM:
+			if (unlikely(dlen < NDIS_RXCSUM_INFO_SIZE))
+				return -EINVAL;
+			info->csum_info = *((const uint32_t *)data);
+			mask |= HN_RXINFO_CSUM;
+			break;
 
-// 		case NDIS_PKTINFO_TYPE_HASHVAL:
-// 			if (unlikely(dlen < NDIS_HASH_VALUE_SIZE))
-// 				return -EINVAL;
-// 			info->hash_value = *((const uint32_t *)data);
-// 			mask |= HN_RXINFO_HASHVAL;
-// 			break;
+		case NDIS_PKTINFO_TYPE_HASHVAL:
+			if (unlikely(dlen < NDIS_HASH_VALUE_SIZE))
+				return -EINVAL;
+			info->hash_value = *((const uint32_t *)data);
+			mask |= HN_RXINFO_HASHVAL;
+			break;
 
-// 		case NDIS_PKTINFO_TYPE_HASHINF:
-// 			if (unlikely(dlen < NDIS_HASH_INFO_SIZE))
-// 				return -EINVAL;
-// 			info->hash_info = *((const uint32_t *)data);
-// 			mask |= HN_RXINFO_HASHINF;
-// 			break;
+		case NDIS_PKTINFO_TYPE_HASHINF:
+			if (unlikely(dlen < NDIS_HASH_INFO_SIZE))
+				return -EINVAL;
+			info->hash_info = *((const uint32_t *)data);
+			mask |= HN_RXINFO_HASHINF;
+			break;
 
-// 		default:
-// 			goto next;
-// 		}
+		default:
+			goto next;
+		}
 
-// 		if (mask == HN_RXINFO_ALL)
-// 			break; /* All found; done */
-// next:
-// 		pi = (const struct rndis_pktinfo *)
-// 		    ((const uint8_t *)pi + pi->size);
-// 	}
+		if (mask == HN_RXINFO_ALL)
+			break; /* All found; done */
+next:
+		pi = (const struct rndis_pktinfo *)
+		    ((const uint8_t *)pi + pi->size);
+	}
 
-// 	/*
-// 	 * Final fixup.
-// 	 * - If there is no hash value, invalidate the hash info.
-// 	 */
-// 	if (!(mask & HN_RXINFO_HASHVAL))
-// 		info->hash_info = HN_NDIS_HASH_INFO_INVALID;
-// 	return 0;
-// }
+	/*
+	 * Final fixup.
+	 * - If there is no hash value, invalidate the hash info.
+	 */
+	if (!(mask & HN_RXINFO_HASHVAL))
+		info->hash_info = HN_NDIS_HASH_INFO_INVALID;
+	return 0;
+}
 
 // static void hn_rx_buf_free_cb(void *buf __rte_unused, void *opaque)
 // {
@@ -506,26 +525,34 @@ hn_nvs_handle_comp(struct rte_eth_dev *dev, uint16_t queue_id,
 // 	hn_nvs_ack_rxbuf(rxb->chan, rxb->xactid);
 // }
 
-// static struct hn_rx_bufinfo *hn_rx_buf_init(struct hn_rx_queue *rxq,
-// 					    const struct vmbus_chanpkt_rxbuf *pkt)
-// {
-// 	struct hn_rx_bufinfo *rxb;
+static struct hn_rx_bufinfo *hn_rx_buf_init(struct uk_netdev_rx_queue *rxq,
+					    const struct vmbus_chanpkt_rxbuf *pkt)
+{
+	struct hn_rx_bufinfo *rxb;
 
-// 	rxb = rxq->rxbuf_info + pkt->hdr.xactid;
-// 	rxb->chan = rxq->chan;
-// 	rxb->xactid = pkt->hdr.xactid;
-// 	rxb->rxq = rxq;
+	uk_pr_debug("[hn_rx_buf_init] begin TODO\n");
+
+	// rxb = rxq->rxbuf_info + pkt->hdr.xactid;
+	rxb = rxq->rxbuf_info + pkt->cp_hdr.cph_xactid;
+	rxb->chan = rxq->chan;
+	// rxb->xactid = pkt->cp_hdr.xactid;
+	rxb->xactid = pkt->cp_hdr.cph_xactid;
+	rxb->rxq = rxq;
 
 // 	rxb->shinfo.free_cb = hn_rx_buf_free_cb;
 // 	rxb->shinfo.fcb_opaque = rxb;
-// 	rte_mbuf_ext_refcnt_set(&rxb->shinfo, 1);
-// 	return rxb;
-// }
+    rte_mbuf_ext_refcnt_set(&rxb->shinfo, 1);
+	return rxb;
+}
 
 // static void hn_rxpkt(struct hn_rx_queue *rxq, struct hn_rx_bufinfo *rxb,
 // 		     uint8_t *data, unsigned int headroom, unsigned int dlen,
 // 		     const struct hn_rxinfo *info)
-// {
+static void hn_rxpkt(struct uk_netdev_rx_queue *rxq, struct hn_rx_bufinfo *rxb,
+		     uint8_t *data, unsigned int headroom, unsigned int dlen,
+		     const struct hn_rxinfo *info)
+{
+	uk_pr_debug("hn_rxpkt] begin TODO\n");
 // 	struct hn_data *hv = rxq->hv;
 // 	struct rte_mbuf *m;
 // 	bool use_extbuf = false;
@@ -634,100 +661,129 @@ hn_nvs_handle_comp(struct rte_eth_dev *dev, uint16_t queue_id,
 // 			rte_pktmbuf_detach_extbuf(m);
 // 		rte_pktmbuf_free(m);
 // 	}
-// }
+}
 
 // static void hn_rndis_rx_data(struct hn_rx_queue *rxq,
 // 			     struct hn_rx_bufinfo *rxb,
 // 			     void *data, uint32_t dlen)
-// {
-// 	unsigned int data_off, data_len;
-// 	unsigned int pktinfo_off, pktinfo_len;
-// 	const struct rndis_packet_msg *pkt = data;
-// 	struct hn_rxinfo info = {
-// 		.vlan_info = HN_NDIS_VLAN_INFO_INVALID,
-// 		.csum_info = HN_NDIS_RXCSUM_INFO_INVALID,
-// 		.hash_info = HN_NDIS_HASH_INFO_INVALID,
-// 	};
-// 	int err;
+static void hn_rndis_rx_data(struct uk_netdev_rx_queue *rxq,
+			     struct hn_rx_bufinfo *rxb,
+			     void *data, uint32_t dlen)
+{
+	unsigned int data_off, data_len;
+	unsigned int pktinfo_off, pktinfo_len;
+	const struct rndis_packet_msg *pkt = data;
+	struct hn_rxinfo info = {
+		.vlan_info = HN_NDIS_VLAN_INFO_INVALID,
+		.csum_info = HN_NDIS_RXCSUM_INFO_INVALID,
+		.hash_info = HN_NDIS_HASH_INFO_INVALID,
+	};
+	int err;
 
-// 	hn_rndis_dump(pkt);
+	uk_pr_debug("[hn_rndis_rx_data] begin\n");
 
-// 	if (unlikely(dlen < sizeof(*pkt)))
-// 		goto error;
+	hn_rndis_dump(pkt);
 
-// 	if (unlikely(dlen < pkt->len))
-// 		goto error; /* truncated RNDIS from host */
+	if (unlikely(dlen < sizeof(*pkt)))
+		goto error;
 
-// 	if (unlikely(pkt->len < pkt->datalen
-// 		     + pkt->oobdatalen + pkt->pktinfolen))
-// 		goto error;
+	if (unlikely(dlen < pkt->len))
+		goto error; /* truncated RNDIS from host */
 
-// 	if (unlikely(pkt->datalen == 0))
-// 		goto error;
+	if (unlikely(pkt->len < pkt->datalen
+		     + pkt->oobdatalen + pkt->pktinfolen))
+		goto error;
 
-// 	/* Check offsets. */
-// 	if (unlikely(pkt->dataoffset < RNDIS_PACKET_MSG_OFFSET_MIN))
-// 		goto error;
+	if (unlikely(pkt->datalen == 0))
+		goto error;
 
-// 	if (likely(pkt->pktinfooffset > 0) &&
-// 	    unlikely(pkt->pktinfooffset < RNDIS_PACKET_MSG_OFFSET_MIN ||
-// 		     (pkt->pktinfooffset & RNDIS_PACKET_MSG_OFFSET_ALIGNMASK)))
-// 		goto error;
+	/* Check offsets. */
+	if (unlikely(pkt->dataoffset < RNDIS_PACKET_MSG_OFFSET_MIN))
+		goto error;
 
-// 	data_off = RNDIS_PACKET_MSG_OFFSET_ABS(pkt->dataoffset);
-// 	data_len = pkt->datalen;
-// 	pktinfo_off = RNDIS_PACKET_MSG_OFFSET_ABS(pkt->pktinfooffset);
-// 	pktinfo_len = pkt->pktinfolen;
+	if (likely(pkt->pktinfooffset > 0) &&
+	    unlikely(pkt->pktinfooffset < RNDIS_PACKET_MSG_OFFSET_MIN ||
+		     (pkt->pktinfooffset & RNDIS_PACKET_MSG_OFFSET_ALIGNMASK)))
+		goto error;
 
-// 	if (likely(pktinfo_len > 0)) {
-// 		err = hn_rndis_rxinfo((const uint8_t *)pkt + pktinfo_off,
-// 				      pktinfo_len, &info);
-// 		if (err)
-// 			goto error;
-// 	}
+	data_off = RNDIS_PACKET_MSG_OFFSET_ABS(pkt->dataoffset);
+	data_len = pkt->datalen;
+	pktinfo_off = RNDIS_PACKET_MSG_OFFSET_ABS(pkt->pktinfooffset);
+	pktinfo_len = pkt->pktinfolen;
 
-// 	/* overflow check */
-// 	if (data_len > data_len + data_off || data_len + data_off > pkt->len)
-// 		goto error;
+	if (likely(pktinfo_len > 0)) {
+		err = hn_rndis_rxinfo((const uint8_t *)pkt + pktinfo_off,
+				      pktinfo_len, &info);
+		if (err)
+			goto error;
+	}
 
-// 	if (unlikely(data_len < RTE_ETHER_HDR_LEN))
-// 		goto error;
+	/* overflow check */
+	if (data_len > data_len + data_off || data_len + data_off > pkt->len)
+		goto error;
 
-// 	hn_rxpkt(rxq, rxb, data, data_off, data_len, &info);
-// 	return;
-// error:
-// 	++rxq->stats.errors;
-// }
+	if (unlikely(data_len < RTE_ETHER_HDR_LEN))
+		goto error;
+
+	hn_rxpkt(rxq, rxb, data, data_off, data_len, &info);
+	return;
+error:
+	++rxq->stats.errors;
+}
 
 // static void
 // hn_rndis_receive(struct rte_eth_dev *dev, struct hn_rx_queue *rxq,
 // 		 struct hn_rx_bufinfo *rxb, void *buf, uint32_t len)
-// {
-// 	const struct rndis_msghdr *hdr = buf;
+static void
+hn_rndis_receive(struct hn_dev *dev, struct uk_netdev_rx_queue *rxq,
+		 struct hn_rx_bufinfo *rxb, void *buf, uint32_t len)
+{
+	const struct rndis_msghdr *hdr = buf;
 
-// 	switch (hdr->type) {
-// 	case RNDIS_PACKET_MSG:
-// 		if (dev->data->dev_started)
-// 			hn_rndis_rx_data(rxq, rxb, buf, len);
-// 		break;
+	uk_pr_debug("[hn_rndis_receive] begin hdr->type: %#x\n", hdr->type);
+	switch (hdr->type) {
+	case RNDIS_PACKET_MSG:
+		uk_pr_debug("[hn_rndis_receive] RNDIS_PACKET_MSG\n");
+		// if (dev->data->dev_started)
+			hn_rndis_rx_data(rxq, rxb, buf, len);
+		break;
 
-// 	case RNDIS_INDICATE_STATUS_MSG:
-// 		hn_rndis_link_status(dev, buf);
-// 		break;
+	case RNDIS_INDICATE_STATUS_MSG:
+		uk_pr_debug("[hn_rndis_receive] RNDIS_INDICATE_STATUS_MSG\n");
+		// hn_rndis_link_status(dev, buf);
+		break;
 
-// 	case RNDIS_INITIALIZE_CMPLT:
-// 	case RNDIS_QUERY_CMPLT:
-// 	case RNDIS_SET_CMPLT:
-// 		hn_rndis_receive_response(rxq->hv, buf, len);
-// 		break;
+	// case RNDIS_INITIALIZE_CMPLT:
+	// case RNDIS_QUERY_CMPLT:
+	// case RNDIS_SET_CMPLT:
+	// 	uk_pr_debug("[hn_rndis_receive] RNDIS_*_CMPLT\n");
+	// 	hn_rndis_receive_response(rxq->hv, buf, len);
+	// 	break;
 
-// 	default:
-// 		PMD_DRV_LOG(NOTICE,
-// 			    "unexpected RNDIS message (type %#x len %u)",
-// 			    hdr->type, len);
-// 		break;
-// 	}
-// }
+	case RNDIS_INITIALIZE_CMPLT:
+		uk_pr_debug("[hn_rndis_receive] RNDIS_INITIALIZE_CMPLT\n");
+		hn_rndis_receive_response(rxq->hv, buf, len);
+		break;
+
+	case RNDIS_QUERY_CMPLT:
+		uk_pr_debug("[hn_rndis_receive] RNDIS_QUERY_CMPLT\n");
+		hn_rndis_receive_response(rxq->hv, buf, len);
+		break;
+
+	case RNDIS_SET_CMPLT:
+		uk_pr_debug("[hn_rndis_receive] RNDIS_SET_CMPLT\n");
+		hn_rndis_receive_response(rxq->hv, buf, len);
+		break;
+
+	default:
+		// PMD_DRV_LOG(NOTICE,
+		// 	    "unexpected RNDIS message (type %#x len %u)",
+		// 	    hdr->type, len);
+		uk_pr_warn("unexpected RNDIS message (type %#x len %u)",
+			    hdr->type, len);
+		break;
+	}
+}
 
 // static void
 // hn_nvs_handle_rxbuf(struct rte_eth_dev *dev,
@@ -735,112 +791,139 @@ hn_nvs_handle_comp(struct rte_eth_dev *dev, uint16_t queue_id,
 // 		    struct hn_rx_queue *rxq,
 // 		    const struct vmbus_chanpkt_hdr *hdr,
 // 		    const void *buf)
-// {
-// 	const struct vmbus_chanpkt_rxbuf *pkt;
-// 	const struct hn_nvs_hdr *nvs_hdr = buf;
-// 	uint32_t rxbuf_sz = hv->rxbuf_res->len;
-// 	char *rxbuf = hv->rxbuf_res->addr;
-// 	unsigned int i, hlen, count;
-// 	struct hn_rx_bufinfo *rxb;
+static void
+hn_nvs_handle_rxbuf(struct hn_dev *dev,
+		    struct hn_data *hv,
+		    struct uk_netdev_rx_queue *rxq,
+		    const struct vmbus_chanpkt_hdr *hdr,
+		    const void *buf)
+{
+	const struct vmbus_chanpkt_rxbuf *pkt;
+	const struct hn_nvs_hdr *nvs_hdr = buf;
+	uint32_t rxbuf_sz = hv->rxbuf_res->len;
+	char *rxbuf = hv->rxbuf_res->addr;
+	unsigned int i, hlen, count;
+	struct hn_rx_bufinfo *rxb;
 
-// 	/* At minimum we need type header */
-// 	if (unlikely(vmbus_chanpkt_datalen(hdr) < sizeof(*nvs_hdr))) {
-// 		PMD_RX_LOG(ERR, "invalid receive nvs RNDIS");
-// 		return;
-// 	}
+	uk_pr_debug("[hn_nvs_handle_rxbuf] begin\n");
 
-// 	/* Make sure that this is a RNDIS message. */
-// 	if (unlikely(nvs_hdr->type != NVS_TYPE_RNDIS)) {
-// 		PMD_RX_LOG(ERR, "nvs type %u, not RNDIS",
-// 			   nvs_hdr->type);
-// 		return;
-// 	}
+	/* At minimum we need type header */
+	if (unlikely(VMBUS_CHANPKT_DATALEN(hdr) < sizeof(*nvs_hdr))) {
+		// PMD_RX_LOG(ERR, "invalid receive nvs RNDIS");
+		uk_pr_err("invalid receive nvs RNDIS\n");
+		return;
+	}
 
-// 	hlen = vmbus_chanpkt_getlen(hdr->hlen);
-// 	if (unlikely(hlen < sizeof(*pkt))) {
-// 		PMD_RX_LOG(ERR, "invalid rxbuf chanpkt");
-// 		return;
-// 	}
+	/* Make sure that this is a RNDIS message. */
+	if (unlikely(nvs_hdr->type != NVS_TYPE_RNDIS)) {
+		// PMD_RX_LOG(ERR, "nvs type %u, not RNDIS",
+		// 	   nvs_hdr->type);
+		uk_pr_err("nvs type %u, not RNDIS\n",
+			   nvs_hdr->type);
+		return;
+	}
 
-// 	pkt = container_of(hdr, const struct vmbus_chanpkt_rxbuf, hdr);
-// 	if (unlikely(pkt->rxbuf_id != NVS_RXBUF_SIG)) {
-// 		PMD_RX_LOG(ERR, "invalid rxbuf_id 0x%08x",
-// 			   pkt->rxbuf_id);
-// 		return;
-// 	}
+	hlen = VMBUS_CHANPKT_GETLEN(hdr->cph_hlen);
+	if (unlikely(hlen < sizeof(*pkt))) {
+		// PMD_RX_LOG(ERR, "invalid rxbuf chanpkt");
+		uk_pr_err("invalid rxbuf chanpkt\n");
+		return;
+	}
 
-// 	count = pkt->rxbuf_cnt;
-// 	if (unlikely(hlen < offsetof(struct vmbus_chanpkt_rxbuf,
-// 				     rxbuf[count]))) {
-// 		PMD_RX_LOG(ERR, "invalid rxbuf_cnt %u", count);
-// 		return;
-// 	}
+	// pkt = container_of(hdr, const struct vmbus_chanpkt_rxbuf, hdr);
+	pkt = __containerof(hdr, const struct vmbus_chanpkt_rxbuf, cp_hdr);
+	if (unlikely(pkt->cp_rxbuf_id != NVS_RXBUF_SIG)) {
+		// PMD_RX_LOG(ERR, "invalid rxbuf_id 0x%08x",
+		// 	   pkt->rxbuf_id);
+		uk_pr_err("invalid rxbuf_id 0x%08x\n",
+			   pkt->cp_rxbuf_id);
+		return;
+	}
 
-// 	if (pkt->hdr.xactid > hv->rxbuf_section_cnt) {
-// 		PMD_RX_LOG(ERR, "invalid rxbuf section id %" PRIx64,
-// 			   pkt->hdr.xactid);
-// 		return;
-// 	}
+	count = pkt->cp_rxbuf_cnt;
+	if (unlikely(hlen < offsetof(struct vmbus_chanpkt_rxbuf,
+				     cp_rxbuf[count]))) {
+		// PMD_RX_LOG(ERR, "invalid rxbuf_cnt %u", count);
+		uk_pr_err("invalid rxbuf_cnt %u\n", count);
+		return;
+	}
 
-// 	/* Setup receive buffer info to allow for callback */
-// 	rxb = hn_rx_buf_init(rxq, pkt);
+	if (pkt->cp_hdr.cph_xactid > hv->rxbuf_section_cnt) {
+		// PMD_RX_LOG(ERR, "invalid rxbuf section id %" PRIx64,
+		// 	   pkt->hdr.xactid);
+		uk_pr_err("invalid rxbuf section id %" PRIx64 "\n",
+			   pkt->cp_hdr.cph_xactid);
+		return;
+	}
 
-// 	/* Each range represents 1 RNDIS pkt that contains 1 Ethernet frame */
-// 	for (i = 0; i < count; ++i) {
-// 		unsigned int ofs, len;
+	/* Setup receive buffer info to allow for callback */
+	rxb = hn_rx_buf_init(rxq, pkt);
 
-// 		ofs = pkt->rxbuf[i].ofs;
-// 		len = pkt->rxbuf[i].len;
+	/* Each range represents 1 RNDIS pkt that contains 1 Ethernet frame */
+	for (i = 0; i < count; ++i) {
+		unsigned int ofs, len;
 
-// 		if (unlikely(ofs + len > rxbuf_sz)) {
-// 			PMD_RX_LOG(ERR,
-// 				   "%uth RNDIS msg overflow ofs %u, len %u",
-// 				   i, ofs, len);
-// 			continue;
-// 		}
+		ofs = pkt->cp_rxbuf[i].rb_ofs;
+		len = pkt->cp_rxbuf[i].rb_len;
 
-// 		if (unlikely(len == 0)) {
-// 			PMD_RX_LOG(ERR, "%uth RNDIS msg len %u", i, len);
-// 			continue;
-// 		}
+		if (unlikely(ofs + len > rxbuf_sz)) {
+			// PMD_RX_LOG(ERR,
+			// 	   "%uth RNDIS msg overflow ofs %u, len %u",
+			// 	   i, ofs, len);
+			uk_pr_err(
+				   "%uth RNDIS msg overflow ofs %u, len %u\n",
+				   i, ofs, len);
+			continue;
+		}
 
-// 		hn_rndis_receive(dev, rxq, rxb,
-// 				 rxbuf + ofs, len);
-// 	}
+		if (unlikely(len == 0)) {
+			// PMD_RX_LOG(ERR, "%uth RNDIS msg len %u", i, len);
+			uk_pr_err("%uth RNDIS msg len %u\n", i, len);
+			continue;
+		}
 
-// 	/* Send ACK now if external mbuf not used */
-// 	if (rte_mbuf_ext_refcnt_update(&rxb->shinfo, -1) == 0)
-// 		hn_nvs_ack_rxbuf(rxb->chan, rxb->xactid);
-// }
+		hn_rndis_receive(dev, rxq, rxb,
+				 rxbuf + ofs, len);
+	}
 
-// /*
-//  * Called when NVS inband events are received.
-//  * Send up a two part message with port_id and the NVS message
-//  * to the pipe to the netvsc-vf-event control thread.
-//  */
-// static void hn_nvs_handle_notify(struct rte_eth_dev *dev,
-// 				 const struct vmbus_chanpkt_hdr *pkt,
-// 				 const void *data)
-// {
-// 	const struct hn_nvs_hdr *hdr = data;
+	/* Send ACK now if external mbuf not used */
+	if (rte_mbuf_ext_refcnt_update(&rxb->shinfo, -1) == 0)
+		hn_nvs_ack_rxbuf(rxb->chan, rxb->xactid);
+}
 
-// 	switch (hdr->type) {
-// 	case NVS_TYPE_TXTBL_NOTE:
-// 		/* Transmit indirection table has locking problems
-// 		 * in DPDK and therefore not implemented
-// 		 */
+/*
+ * Called when NVS inband events are received.
+ * Send up a two part message with port_id and the NVS message
+ * to the pipe to the netvsc-vf-event control thread.
+ */
+static void hn_nvs_handle_notify(struct rte_eth_dev *dev,
+				 const struct vmbus_chanpkt_hdr *pkt,
+				 const void *data)
+{
+	const struct hn_nvs_hdr *hdr = data;
+
+	uk_pr_debug("[hn_nvs_handle_notify] begin TODO\n");
+
+	switch (hdr->type) {
+	case NVS_TYPE_TXTBL_NOTE:
+		/* Transmit indirection table has locking problems
+		 * in DPDK and therefore not implemented
+		 */
 // 		PMD_DRV_LOG(DEBUG, "host notify of transmit indirection table");
-// 		break;
+		uk_pr_debug("host notify of transmit indirection table\n");
+		break;
 
-// 	case NVS_TYPE_VFASSOC_NOTE:
+	case NVS_TYPE_VFASSOC_NOTE:
 // 		hn_nvs_handle_vfassoc(dev, pkt, data);
-// 		break;
+		break;
 
-// 	default:
+	default:
 // 		PMD_DRV_LOG(INFO,
 // 			    "got notify, nvs type %u", hdr->type);
-// 	}
-// }
+		uk_pr_info(
+			    "got notify, nvs type %u\n", hdr->type);
+	}
+}
 
 // struct hn_rx_queue *hn_rx_queue_alloc(struct hn_data *hv,
 // 				      uint16_t queue_id,
@@ -1043,6 +1126,8 @@ uint32_t hn_process_events(struct hn_data *hv, uint16_t queue_id,
 	uint32_t tx_done = 0;
 	int ret = 0;
 
+	uk_pr_info("[hn_process_events] start queue_id: %d, tx_limit: %u\n", queue_id, tx_limit);
+
 	// rxq = queue_id == 0 ? hv->primary : dev->data->rx_queues[queue_id];
 	rxq = hv->primary;
 
@@ -1059,7 +1144,9 @@ uint32_t hn_process_events(struct hn_data *hv, uint16_t queue_id,
 		const void *data;
 
 retry:
-		ret = rte_vmbus_chan_recv_raw(rxq->chan, rxq->event_buf, &len);
+		// ret = rte_vmbus_chan_recv_raw(rxq->chan, rxq->event_buf, &len);
+		ret = vmbus_chan_recv_raw(rxq->chan, rxq->event_buf, &len);
+		uk_pr_info("[hn_process_events] After vmbus_chan_recv_raw ret: %d\n", ret);
 		if (ret == -EAGAIN)
 			break;	/* ring is empty */
 
@@ -1068,10 +1155,11 @@ retry:
 
 			// PMD_DRV_LOG(DEBUG,
 			// 	    "event buffer expansion (need %u)", len);
-			uk_pr_debug("event buffer expansion (need %u)", len);
+			uk_pr_debug("event buffer expansion (need %u)\n", len);
 			rxq->event_sz = len + len / 4;
-			rxq->event_buf = rte_realloc(rxq->event_buf, rxq->event_sz,
-						     RTE_CACHE_LINE_SIZE);
+			// rxq->event_buf = rte_realloc(rxq->event_buf, rxq->event_sz,
+			// 			     RTE_CACHE_LINE_SIZE);
+			rxq->event_buf = uk_realloc(uk_alloc_get_default(), rxq->event_buf, rxq->event_sz);
 			if (rxq->event_buf)
 				goto retry;
 			/* out of memory, no more events now */
@@ -1081,42 +1169,55 @@ retry:
 
 		if (unlikely(ret <= 0)) {
 			/* This indicates a failure to communicate (or worse) */
-			rte_exit(EXIT_FAILURE,
-				 "vmbus ring buffer error: %d", ret);
+			// rte_exit(EXIT_FAILURE,
+			// 	 "vmbus ring buffer error: %d", ret);
+			UK_CRASH("vmbus ring buffer error: %d\n", ret);
+
 		}
 
 		bytes_read += ret;
 		pkt = (const struct vmbus_chanpkt_hdr *)rxq->event_buf;
-		data = (char *)rxq->event_buf + vmbus_chanpkt_getlen(pkt->cph_hlen);
+		data = (char *)rxq->event_buf + VMBUS_CHANPKT_GETLEN(pkt->cph_hlen);
 
+		uk_pr_info("[hn_process_events] cph_type: %u\n", pkt->cph_type);
 		switch (pkt->cph_type) {
 		case VMBUS_CHANPKT_TYPE_COMP:
+			uk_pr_info("[hn_process_events] handle VMBUS_CHANPKT_TYPE_COMP\n");
 			++tx_done;
 			hn_nvs_handle_comp(dev, queue_id, pkt, data);
 			break;
 
 		case VMBUS_CHANPKT_TYPE_RXBUF:
+			uk_pr_info("[hn_process_events] handle VMBUS_CHANPKT_TYPE_RXBUF\n");
 			hn_nvs_handle_rxbuf(dev, hv, rxq, pkt, data);
 			break;
 
 		case VMBUS_CHANPKT_TYPE_INBAND:
+			uk_pr_info("[hn_process_events] handle VMBUS_CHANPKT_TYPE_INBAND\n");
 			hn_nvs_handle_notify(dev, pkt, data);
 			break;
 
 		default:
 			// PMD_DRV_LOG(ERR, "unknown chan pkt %u", pkt->type);
-			uk_pr_err("unknown chan pkt %u", pkt->cph_type);
+			uk_pr_err("unknown chan pkt %u\n", pkt->cph_type);
 			break;
 		}
 
-		if (tx_limit && tx_done >= tx_limit)
+		if (tx_limit && tx_done >= tx_limit) {
+			uk_pr_info("tx_done: %u, tx_limit: %u\n", tx_done, tx_limit);
 			break;
+		}
 	}
 
-	if (bytes_read > 0)
-		rte_vmbus_chan_signal_read(rxq->chan, bytes_read);
+	if (bytes_read > 0) {
+		uk_pr_info("[hn_process_events] bytes_read: %u\n", bytes_read);
+		// rte_vmbus_chan_signal_read(rxq->chan, bytes_read);
+		vmbus_chan_signal_read(rxq->chan, bytes_read);
+	}
 
 	rte_spinlock_unlock(&rxq->ring_lock);
+
+	uk_pr_info("[hn_process_events] end\n");
 
 	return tx_done;
 }
@@ -1292,6 +1393,8 @@ static void hn_encap(struct rndis_packet_msg *pkt,
 	uint32_t *pi_data;
 	uint32_t pkt_hlen;
 
+	uk_pr_info("[hn_encap] pkt: %p, queue_id: %d, m: %p\n", pkt, queue_id, m);
+
 	pkt->type = RNDIS_PACKET_MSG;
 	pkt->len = m->len;
 	pkt->dataoffset = 0;
@@ -1375,8 +1478,8 @@ static unsigned int hn_get_slots(const struct uk_netbuf *m)
 		// unsigned int size = rte_pktmbuf_data_len(m);
 		unsigned int size = m->len;
 		// unsigned int offs = rte_mbuf_data_iova(m) & PAGE_MASK;
-		unsigned int offs = (uint64_t)m->data & __PAGE_MASK;
-
+		// unsigned int offs = (uint64_t)m->data & __PAGE_MASK;
+		unsigned int offs = (uint64_t)m->data & (rte_mem_page_size() - 1);
 		// slots += (offs + size + rte_mem_page_size() - 1) /
 		// 		rte_mem_page_size();
 		slots += (offs + size + __PAGE_SIZE - 1) /
@@ -1396,13 +1499,14 @@ static unsigned int hn_fill_sg(struct vmbus_gpa *sg,
 	unsigned int segs = 0;
 
 	while (m) {
-		// rte_iova_t addr = rte_mbuf_data_iova(m);
+		//rte_iova_t addr = rte_mbuf_data_iova(m);
 		uint64_t addr = (uint64_t)m->data;
-		// unsigned int page = addr / rte_mem_page_size();
+		//unsigned int page = addr / rte_mem_page_size();
 		unsigned int page = addr / __PAGE_SIZE;
-		// unsigned int offset = addr & PAGE_MASK;
-		unsigned int offset = addr & __PAGE_MASK;
-		// unsigned int len = rte_pktmbuf_data_len(m);
+		//unsigned int offset = addr & PAGE_MASK;
+		//unsigned int offset = addr & __PAGE_MASK;
+		unsigned int offset = addr & (rte_mem_page_size() - 1);
+		//unsigned int len = rte_pktmbuf_data_len(m);
 		unsigned int len = m->len;
 
 		while (len > 0) {
@@ -1411,6 +1515,7 @@ static unsigned int hn_fill_sg(struct vmbus_gpa *sg,
 			unsigned int bytes = MIN(len,
 					__PAGE_SIZE - offset);
 
+			uk_pr_info("hn_fill_sg] sg[%u].page: %u, sg[%u].ofs: %u, sg[%u].len\n", segs, page, segs, offset, segs, bytes);
 			sg[segs].page = page;
 			sg[segs].ofs = offset;
 			sg[segs].len = bytes;
@@ -1440,7 +1545,7 @@ static int hn_xmit_sg(struct uk_netdev_tx_queue *txq,
 		.rndis_mtype = NVS_RNDIS_MTYPE_DATA,
 		.chim_sz = txd->chim_size,
 	};
-	// rte_iova_t addr;
+	//rte_iova_t addr;
 	uint64_t addr;
 	unsigned int segs;
 
@@ -1453,23 +1558,27 @@ static int hn_xmit_sg(struct uk_netdev_tx_queue *txq,
 	hn_rndis_dump(txd->rndis_pkt);
 
 	/* pass IOVA of rndis header in first segment */
-	addr = txq->tx_rndis_iova +
-		((char *)txd->rndis_pkt - (char *)txq->tx_rndis);
+	//addr = txq->tx_rndis_iova +
+	//	((char *)txd->rndis_pkt - (char *)txq->tx_rndis);
+	addr = ukplat_virt_to_phys(txd->rndis_pkt);
 
-	// sg[0].page = addr / rte_mem_page_size();
+	//sg[0].page = addr / rte_mem_page_size();
 	sg[0].page = addr / __PAGE_SIZE;
-	// sg[0].ofs = addr & PAGE_MASK;
-	sg[0].ofs = addr & __PAGE_MASK;
+	//sg[0].ofs = addr & PAGE_MASK;
+	//sg[0].ofs = addr & __PAGE_MASK;;
+	sg[0].ofs = addr & (rte_mem_page_size() - 1);
 	sg[0].len = RNDIS_PACKET_MSG_OFFSET_ABS(hn_rndis_pktlen(txd->rndis_pkt));
 	segs = 1;
 
-	// hn_update_packet_stats(&txq->stats, m);
+	uk_pr_info("hn_xmit_sg] sg[0].page: %u, sg[0].ofs: %u, sg[0].len\n", sg[0].page, sg[0].ofs, sg[0].len);
+
+	//hn_update_packet_stats(&txq->stats, m);
 
 	segs += hn_fill_sg(sg + 1, m);
 
-	// PMD_TX_LOG(DEBUG, "port %u:%u tx %u segs %u size %u",
-	// 	   txq->port_id, txq->queue_id, txd->chim_index,
-	// 	   segs, nvs_rndis.chim_sz);
+	//PMD_TX_LOG(DEBUG, "port %u:%u tx %u segs %u size %u",
+	//	   txq->port_id, txq->queue_id, txd->chim_index,
+	//	   segs, nvs_rndis.chim_sz);
 	uk_pr_debug("port %u:%u tx %u segs %u size %u",
 		txq->port_id, txq->queue_id, txd->chim_index,
 		segs, nvs_rndis.chim_sz);
@@ -1494,7 +1603,7 @@ hn_xmit(struct uk_netdev *n,
 	uint16_t nb_tx, tx_thresh;
 	int ret;
 
-	uk_pr_info("[hn_xmit] enter");
+	uk_pr_info("[hn_xmit] enter\n");
 
 	UK_ASSERT(n != NULL);
 	UK_ASSERT(txq != NULL);
@@ -1609,7 +1718,7 @@ fail:
 	if (need_sig)
 		//rte_vmbus_chan_signal_tx(txq->chan);
 		vmbus_chan_signal_tx(txq->chan);
-	uk_pr_info("[hn_xmit] end");
+	uk_pr_info("[hn_xmit] end\n");
 	return nb_tx;
 }
 

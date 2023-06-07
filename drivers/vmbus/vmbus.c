@@ -295,11 +295,11 @@ vmbus_msghc_exec_noresult(struct vmbus_msghc *mh)
 	bus_addr_t inprm_paddr;
 	int ii;
 
-	uk_pr_info("vmbus_msghc_exec_noresult\n");
+	// uk_pr_info("vmbus_msghc_exec_noresult\n");
 
 	inprm = vmbus_xact_req_data(mh->mh_xact);
 	inprm_paddr = vmbus_xact_req_paddr(mh->mh_xact);
-	uk_pr_info("vmbus_msghc_exec_noresult inprm: %p, inprm_paddr: %lx\n", inprm, inprm_paddr);
+	// uk_pr_info("vmbus_msghc_exec_noresult inprm: %p, inprm_paddr: %lx\n", inprm, inprm_paddr);
 
 	/*
 	 * Save the input parameter so that we could restore the input
@@ -322,9 +322,9 @@ vmbus_msghc_exec_noresult(struct vmbus_msghc *mh)
 		uint64_t status;
 
 		status = hypercall_post_message(inprm_paddr);
+		// uk_pr_info("vmbus_msghc_exec_noresult %lu\n", status);
 		if (status == HYPERCALL_STATUS_SUCCESS)
 			return 0;
-		uk_pr_info("vmbus_msghc_exec_noresult %lu\n", status);
 		// pause_sbt("hcpmsg", time, 0, C_HARDCLOCK);
 		// if (time < SBT_1S * 2)
 		// 	time *= 2;
@@ -339,7 +339,7 @@ vmbus_msghc_exec_noresult(struct vmbus_msghc *mh)
 
 #undef HC_RETRY_MAX
 
-	uk_pr_info("vmbus_msghc_exec_noresult error: EIO\n");
+	// uk_pr_info("vmbus_msghc_exec_noresult error: EIO\n");
  
 	return EIO;
 }
@@ -624,9 +624,13 @@ vmbus_scan(struct vmbus_softc *sc)
 	 * attached.
 	 */
 	//bus_topo_assert();
-	while (!sc->vmbus_scandone) {
+	// while (!sc->vmbus_scandone) {
+		// mtx_sleep(&sc->vmbus_scandone, bus_topo_mtx(), 0, "vmbusdev", 0);
+		// mtx_sleep(&sc->vmbus_scandone_wq, sc->vmbus_scandone, NULL, 0, "vmbusdev", 0);
+	// }
+	while (!sc->vmbus_scandone || sc->vmbus_scancount || !sc->vmbus_scandone) {
 		//mtx_sleep(&sc->vmbus_scandone, bus_topo_mtx(), 0, "vmbusdev", 0);
-		mtx_sleep(&sc->vmbus_scandone_wq, sc->vmbus_scandone, NULL, 0, "vmbusdev", 0);
+		mtx_sleep(&sc->vmbus_scandone_wq, (sc->vmbus_scandone && !sc->vmbus_scancount && sc->vmbus_probedone), NULL, 0, "vmbusdev", 0);
 	}
 
 	if (bootverbose) {
@@ -1935,6 +1939,8 @@ static int vmbus_probe_device(struct vmbus_driver *drv,
 
 	uk_pr_info("[vmbus_probe_device] start\n");
 
+	vmbus_sc->vmbus_probedone = true;
+
 	dev = uk_calloc(vbh.a, 1, sizeof(*dev));
 	if (!dev) {
 		uk_pr_err("Failed to initialize: Out of memory!\n");
@@ -1948,6 +1954,7 @@ static int vmbus_probe_device(struct vmbus_driver *drv,
 		uk_pr_err("Failed to add device.\n");
 		uk_free(vbh.a, dev);
 	}
+
 
 	uk_pr_info("[vmbus_probe_device] end\n");
 	return err;
@@ -1964,10 +1971,17 @@ static int vmbus_probe_device_type(struct vmbus_channel *chan)
 	drv = vmbus_find_driver(&chan->ch_guid_type);
 	if (!drv) {
 		uk_pr_warn("No driver for device type: %d\n", chan->ch_guid_inst.hv_guid[0]);
+		atomic_subtract_int(&vmbus_sc->vmbus_scancount, 1);
+		uk_pr_info("[vmbus_chan_msgproc_choffer] scancount decrement: %u\n", vmbus_sc->vmbus_scancount);
+		wakeup(&vmbus_sc->vmbus_scandone_wq);
 		return 0;
 	}
 
 	err = vmbus_probe_device(drv, chan);
+
+	atomic_subtract_int(&vmbus_sc->vmbus_scancount, 1);
+	uk_pr_info("[vmbus_chan_msgproc_choffer] scancount decrement: %u\n", vmbus_sc->vmbus_scancount);
+	wakeup(&vmbus_sc->vmbus_scandone_wq);
 
 	uk_pr_info("[vmbus_probe_device_type] end error: %d\n", err);
 	return err;

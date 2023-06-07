@@ -6,17 +6,16 @@
  * All rights reserved.
  */
 
-// #include <rte_eal_paging.h>
-// #include <ethdev_driver.h>
-
 #include <inttypes.h>
 #include <stdbool.h>
 #include <uk/allocpool.h>
+#include <uk/bitmap.h>
 #include <uk/netbuf.h>
 #include <uk/netdev.h>
 #include <uk/sglist.h>
 #include <uk/spinlock.h>
 
+#include "rndis.h"
 #include <vmbus/vmbus_chanvar.h>
 
 /* From DPDK/lib/net/rte_ether.h */
@@ -91,6 +90,105 @@ rte_atomic32_add_return(rte_atomic32_t *v, int32_t inc)
 	return __sync_add_and_fetch(&v->cnt, inc);
 }
 
+/* rte_mbuf_core.h start */
+ typedef void (*rte_mbuf_extbuf_free_callback_t)(void *addr, void *opaque);
+ 
+ struct rte_mbuf_ext_shared_info {
+     rte_mbuf_extbuf_free_callback_t free_cb; 
+     void *fcb_opaque;                        
+     uint16_t refcnt;
+ };
+/* rte_mbuf_core.h end */
+
+/* rte_mbuf.h  start */
+ static inline uint16_t
+ rte_mbuf_ext_refcnt_read(const struct rte_mbuf_ext_shared_info *shinfo)
+ {
+     return __atomic_load_n(&shinfo->refcnt, __ATOMIC_RELAXED);
+ }
+ 
+ static inline void
+ rte_mbuf_ext_refcnt_set(struct rte_mbuf_ext_shared_info *shinfo,
+     uint16_t new_value)
+ {
+     __atomic_store_n(&shinfo->refcnt, new_value, __ATOMIC_RELAXED);
+ }
+ 
+ static inline uint16_t
+ rte_mbuf_ext_refcnt_update(struct rte_mbuf_ext_shared_info *shinfo,
+     int16_t value)
+ {
+     if (likely(rte_mbuf_ext_refcnt_read(shinfo) == 1)) {
+         ++value;
+         rte_mbuf_ext_refcnt_set(shinfo, (uint16_t)value);
+         return (uint16_t)value;
+     }
+ 
+     return __atomic_add_fetch(&shinfo->refcnt, (uint16_t)value,
+                  __ATOMIC_ACQ_REL);
+ }
+/* rte_mbuf.h  end */
+
+/* rte_common.h start */
+/*********** Macros/static functions for doing alignment ********/
+
+
+/**
+ * Macro to align a pointer to a given power-of-two. The resultant
+ * pointer will be a pointer of the same type as the first parameter, and
+ * point to an address no higher than the first parameter. Second parameter
+ * must be a power-of-two value.
+ */
+#define RTE_PTR_ALIGN_FLOOR(ptr, align) \
+        ((typeof(ptr))RTE_ALIGN_FLOOR((uintptr_t)ptr, align))
+
+/**
+ * Macro to align a value to a given power-of-two. The resultant value
+ * will be of the same type as the first parameter, and will be no
+ * bigger than the first parameter. Second parameter must be a
+ * power-of-two value.
+ */
+#define RTE_ALIGN_FLOOR(val, align) \
+        (typeof(val))((val) & (~((typeof(val))((align) - 1))))
+
+/**
+ * Macro to align a pointer to a given power-of-two. The resultant
+ * pointer will be a pointer of the same type as the first parameter, and
+ * point to an address no lower than the first parameter. Second parameter
+ * must be a power-of-two value.
+ */
+#define RTE_PTR_ALIGN_CEIL(ptr, align) \
+        RTE_PTR_ALIGN_FLOOR((typeof(ptr))RTE_PTR_ADD(ptr, (align) - 1), align)
+
+/**
+ * Macro to align a value to a given power-of-two. The resultant value
+ * will be of the same type as the first parameter, and will be no lower
+ * than the first parameter. Second parameter must be a power-of-two
+ * value.
+ */
+#define RTE_ALIGN_CEIL(val, align) \
+        RTE_ALIGN_FLOOR(((val) + ((typeof(val)) (align) - 1)), align)
+
+/**
+ * Macro to align a pointer to a given power-of-two. The resultant
+ * pointer will be a pointer of the same type as the first parameter, and
+ * point to an address no lower than the first parameter. Second parameter
+ * must be a power-of-two value.
+ * This function is the same as RTE_PTR_ALIGN_CEIL
+ */
+#define RTE_PTR_ALIGN(ptr, align) RTE_PTR_ALIGN_CEIL(ptr, align)
+
+/**
+ * Macro to align a value to a given power-of-two. The resultant
+ * value will be of the same type as the first parameter, and
+ * will be no lower than the first parameter. Second parameter
+ * must be a power-of-two value.
+ * This function is the same as RTE_ALIGN_CEIL
+ */
+#define RTE_ALIGN(val, align) RTE_ALIGN_CEIL(val, align)
+
+/* rte_common.h end */
+
 /*
  * Tunable ethdev params
  */
@@ -132,7 +230,26 @@ typedef uint64_t rte_iova_t;
 #define rte_delay_us(us)
 
 #define rte_eth_dev hn_dev
+
+#define rte_spinlock_init ukarch_spin_init
+#define rte_spinlock_lock(lock) ukarch_spin_lock(lock)
+#define rte_spinlock_unlock(lock) ukarch_spin_unlock(lock)
+#define rte_spinlock_trylock(lock) ukarch_spin_trylock(lock)
+
+#define rte_bitmap_set(bmp, pos) uk_bitmap_set(bmp, pos, 1)
 /* END */
+
+/* Moved from hn_rxtx.c - start */
+#define HN_RNDIS_PKT_LEN				\
+ 	(sizeof(struct rndis_packet_msg) +		\
+	 RNDIS_PKTINFO_SIZE(NDIS_HASH_VALUE_SIZE) +	\
+	 RNDIS_PKTINFO_SIZE(NDIS_VLAN_INFO_SIZE) +	\
+	 RNDIS_PKTINFO_SIZE(NDIS_LSO2_INFO_SIZE) +	\
+	 RNDIS_PKTINFO_SIZE(NDIS_TXCSUM_INFO_SIZE))
+
+#define HN_RNDIS_PKT_ALIGNED	RTE_ALIGN(HN_RNDIS_PKT_LEN, RTE_CACHE_LINE_SIZE)
+
+#define HN_RXQ_EVENT_DEFAULT	2048
 
 struct hn_data;
 struct hn_txdesc;
@@ -148,6 +265,7 @@ struct hn_stats {
 	/* Size bins in array as RFC 2819, undersized [0], 64 [1], etc */
 	uint64_t	size_bins[8];
 };
+/* Moved from hn_rxtx.c - end */
 
 struct uk_netdev_tx_queue {
 	/* The netfront device */
@@ -156,6 +274,8 @@ struct uk_netdev_tx_queue {
 	uint16_t lqueue_id;
 	/* True if initialized */
 	bool initialized;
+	/* Allocator for the txq */
+	struct uk_alloc *a;
 
 	struct hn_data  *hv;
 	struct vmbus_channel *chan;
@@ -165,8 +285,9 @@ struct uk_netdev_tx_queue {
 	// struct rte_mempool *txdesc_pool;
 	struct uk_allocpool *txdesc_pool;
 	// const struct rte_memzone *tx_rndis_mz;
-	void		*tx_rndis;
-	rte_iova_t	tx_rndis_iova;
+	// void		*tx_rndis;
+	struct uk_allocpool *tx_rndis_pool;
+	// rte_iova_t	tx_rndis_iova;
 
 	/* Applied packet transmission aggregation limits. */
 	uint32_t	agg_szmax;
@@ -189,6 +310,10 @@ struct uk_netdev_rx_queue {
 	uint16_t lqueue_id;
 	/* True if initialized */
 	bool initialized;
+	/* Callback for filling the buffer */
+	uk_netdev_alloc_rxpkts alloc_rxpkts;
+	/* Reference to a user data */
+	void *alloc_rxpkts_argp;
 
 	/* The flag to interrupt on the transmit queue */
 	uint8_t intr_enabled;
@@ -218,7 +343,7 @@ struct hn_rx_bufinfo {
 	// struct hn_rx_queue *rxq;
 	struct uk_netdev_rx_queue *rxq;
 	uint64_t	xactid;
-// 	struct rte_mbuf_ext_shared_info shinfo;
+ 	struct rte_mbuf_ext_shared_info shinfo;
 } __rte_cache_aligned;
 
 #define HN_INVALID_PORT	UINT16_MAX
@@ -285,7 +410,8 @@ struct hn_data {
 	uk_spinlock chim_lock;
 	// struct rte_mem_resource *chim_res;	/* UIO resource for Tx */
 	struct rte_mem_resource chim_res;
-	// struct rte_bitmap *chim_bmap;		/* Send buffer map */
+	// struct rte_bitmap chim_bmap;		/* Send buffer map */
+	unsigned long *chim_bmap;		/* Send buffer map */
 	uint32_t		chim_gpadl;
 	void		*chim_bmem;
 	uint32_t	tx_copybreak;

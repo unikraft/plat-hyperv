@@ -1179,7 +1179,7 @@ vmbus_chan_send_sglist(struct vmbus_channel *chan,
 	boolean_t send_evt;
 	uint64_t pad = 0;
 
-	uk_pr_info("vmbus_chan_send_sglist] begin\n");
+	uk_pr_info("[vmbus_chan_send_sglist] begin\n");
 
 	hlen = __offsetof(struct vmbus_chanpkt_sglist, cp_gpa[sglen]);
 	pktlen = hlen + dlen;
@@ -1208,12 +1208,13 @@ vmbus_chan_send_sglist(struct vmbus_channel *chan,
 // 	if (!error && send_evt)
 // 		vmbus_chan_signal_tx(chan);
 	/* if caller is batching, just propagate the status */
+	uk_pr_info("[vmbus_chan_send_sglist] error: %d\n", error);
 	if (need_sig)
 		*need_sig |= send_evt;
 	else if (error == 0 && send_evt)
 		vmbus_chan_signal_tx(chan);
 
-	uk_pr_info("vmbus_chan_send_sglist] end error: %d\n", error);
+	uk_pr_info("[vmbus_chan_send_sglist] end error: %d\n", error);
 	
 	return error;
 }
@@ -1259,6 +1260,45 @@ vmbus_chan_send_sglist(struct vmbus_channel *chan,
 // 	return error;
 // }
 
+/* Signal host after reading N bytes */
+void vmbus_chan_signal_read(struct vmbus_channel *chan, uint32_t bytes_read)
+{
+	struct vmbus_br *rbr = &chan->ch_rxbr.rxbr;
+	uint32_t write_sz, pending_sz;
+
+	uk_pr_info("[vmbus_chan_signal_read] begin\n");
+	uk_pr_info("[vmbus_chan_signal_read] ch_id: %u, ch_rxbr->vbr: %p\n", chan->ch_id, chan->ch_rxbr.rxbr.vbr);
+
+	/* No need for signaling on older versions */
+	// if (!rbr->vbr->feature_bits.feat_pending_send_sz)
+	// 	return;
+
+	/* Make sure reading of pending happens after new read index */
+	// rte_smp_mb();
+	mb();
+
+	// pending_sz = rbr->vbr->pending_send;
+	pending_sz = rbr->vbr->br_pending_snd_sz;
+	if (!pending_sz)
+		return;
+
+	// rte_smp_rmb();
+	mb();
+	// write_sz = vmbus_br_availwrite(rbr, rbr->vbr->windex);
+	write_sz = vmbus_rxbr_available(rbr);
+
+	/* If there was space before then host was not blocked */
+	if (write_sz - bytes_read > pending_sz)
+		return;
+
+	/* If pending write will not fit */
+	if (write_sz <= pending_sz)
+		return;
+
+	// vmbus_set_event(chan);
+	vmbus_chan_signal(chan);
+}
+
 int
 vmbus_chan_recv(struct vmbus_channel *chan, void *data, int *dlen0,
     uint64_t *xactid)
@@ -1300,6 +1340,55 @@ vmbus_chan_recv(struct vmbus_channel *chan, void *data, int *dlen0,
 	KASSERT(!error, ("vmbus_rxbr_read failed"));
 
 	return (0);
+}
+
+/* From DPDK/vmbus_chan.c */
+int vmbus_chan_recv_raw(struct vmbus_channel *chan,
+			    void *data, uint32_t *len)
+{
+	struct vmbus_chanpkt_hdr pkt;
+	uint32_t dlen, bufferlen = *len;
+	int error;
+
+	uk_pr_info("[vmbus_chan_recv_raw] begin buffer len: %u\n", *len);
+
+	error = vmbus_rxbr_peek(&chan->ch_rxbr, &pkt, sizeof(pkt));
+	uk_pr_info("[vmbus_chan_recv_raw] After vmbus_rxbr_peek error: %d\n", error);
+	if (error)
+		return (error);
+
+	if (__predict_false(pkt.cph_hlen < VMBUS_CHANPKT_HLEN_MIN)) {
+		vmbus_chan_printf(chan, "invalid hlen %u\n", pkt.cph_hlen);
+		/* XXX this channel is dead actually. */
+		return -(EIO);
+	}
+	if (__predict_false(pkt.cph_hlen > pkt.cph_tlen)) {
+		vmbus_chan_printf(chan, "invalid hlen %u and tlen %u\n",
+		    pkt.cph_hlen, pkt.cph_tlen);
+		/* XXX this channel is dead actually. */
+		return -(EIO);
+	}
+
+	/* Length are in quad words */
+	dlen = pkt.cph_tlen << VMBUS_CHANPKT_SIZE_SHIFT;
+	*len = dlen;
+
+	/* If caller buffer is not large enough */
+	if (__predict_false(dlen > bufferlen)) {
+		uk_pr_info("[vmbus_chan_recv_raw] end dlen: %u, bufferlen: %u, error: ENOBUFS\n", dlen, bufferlen);
+		return -(ENOBUFS);
+	}
+
+	/* Read data and skip packet header */
+	error = vmbus_rxbr_read(&chan->ch_rxbr, data, dlen, 0);
+	if (error) {
+		uk_pr_info("[vmbus_chan_recv_raw] vmbus_rxbr_read error: %d\n", error);
+		return (error);
+	}
+
+	/* Return the number of bytes read */
+	uk_pr_info("[vmbus_chan_recv_raw] end return: %d\n", dlen + sizeof(uint64_t));
+	return dlen + sizeof(uint64_t);
 }
 
 // int
@@ -1951,6 +2040,10 @@ vmbus_chan_msgproc_choffer(struct vmbus_softc *sc,
 
 	int error;
 
+	atomic_add_int(&sc->vmbus_scancount, 1);
+	//sc->vmbus_scancount++;
+	uk_pr_info("[vmbus_chan_msgproc_choffer] scancount increment: %u\n", sc->vmbus_scancount);
+
 	offer = (const struct vmbus_chanmsg_choffer *)msg->msg_data;
 
 	uk_pr_info("[vmbus_chan_msgproc_choffer] chid: %u start\n", offer->chm_chanid);
@@ -1959,7 +2052,8 @@ vmbus_chan_msgproc_choffer(struct vmbus_softc *sc,
 	if (chan == NULL) {
 		device_printf(sc->vmbus_dev, "allocate chan%u failed\n",
 		    offer->chm_chanid);
-		return;
+		// return;
+		goto failed;
 	}
 
 	chan->ch_id = offer->chm_chanid;
@@ -2045,7 +2139,8 @@ vmbus_chan_msgproc_choffer(struct vmbus_softc *sc,
 		atomic_subtract_int(&chan->ch_refs, 1);
 		vmbus_chan_free(chan);
 		uk_pr_info("[vmbus_chan_msgproc] end vmbus_chan_add error: %d\n", error);
-		return;
+		//return;
+		goto failed;
 	}
 	// taskqueue_enqueue(chan->ch_mgmt_tq, &chan->ch_attach_task);
 	VMBUS_PCPU_GET(sc, message_thread, curcpu) = uk_thread_create(thread_name, chan->ch_attach_task.ta_func, chan->ch_attach_task.ta_context);
@@ -2053,6 +2148,10 @@ vmbus_chan_msgproc_choffer(struct vmbus_softc *sc,
 		uk_pr_info("[vmbus_chan_msgproc_choffer] error creating uk_thread: %d\n", PTR2ERR(VMBUS_PCPU_GET(sc, message_thread, curcpu)));
 	
 	uk_pr_info("[vmbus_chan_msgproc_choffer] chid: %u end\n", offer->chm_chanid);
+	return;
+
+failed:
+	atomic_subtract_int(&sc->vmbus_scancount, 1);
 }
 
 static void
