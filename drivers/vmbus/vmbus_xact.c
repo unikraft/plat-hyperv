@@ -360,26 +360,26 @@ vmbus_xact_wait1(struct vmbus_xact *xact, size_t *resp_len,
 	struct vmbus_xact_ctx *ctx = xact->x_ctx;
 	const void *resp;
 
-	uk_pr_info("[vmbus_xact_wait1] ctx: %p, start\n", ctx);
+	// uk_pr_info("[%s] ctx: %p, start\n", __func__, ctx);
 
 	mtx_lock(&ctx->xc_lock);
 
-	uk_pr_info("[vmbus_xact_wait1] ctx: %p, ctx->xc_flags: %u\n", ctx, ctx->xc_flags);
-	uk_pr_info("[vmbus_xact_wait1] ctx->xc_active: %p, ctx->xc_active->x_wq: %p\n", ctx->xc_active, &ctx->xc_active->x_wq);
-	uk_pr_info("[vmbus_xact_wait1] thread: %p\n", uk_thread_current());
+	// uk_pr_info("[%s] ctx: %p, ctx->xc_flags: %u\n", __func__, ctx, ctx->xc_flags);
+	// uk_pr_info("[%s] ctx->xc_active: %p, ctx->xc_active->x_wq: %p\n", __func__, ctx->xc_active, &ctx->xc_active->x_wq);
+	// uk_pr_info("[%s] thread: %p\n", __func__, uk_thread_current());
 	KASSERT(ctx->xc_active == xact, ("xact mismatch"));
 	while (xact->x_resp == NULL &&
 	    (ctx->xc_flags & VMBUS_XACT_CTXF_DESTROY) == 0) {
 		if (can_sleep) {
-			uk_pr_info("[vmbus_xact_wait1] ctx: %p, mtx_sleep xact->x_resp: %p, ctx->xc_flags: %u\n", ctx, xact->x_resp, ctx->xc_flags);
+			uk_pr_debug("[%s] ctx: %p, mtx_sleep xact->x_resp: %p, ctx->xc_flags: %u\n", __func__, ctx, xact->x_resp, ctx->xc_flags);
 // 			mtx_sleep(&ctx->xc_active, &ctx->xc_lock, 0,
 // 			    "wxact", 0);
 			mtx_sleep(&ctx->xc_active->x_wq, !(xact->x_resp == NULL &&
 	    		(ctx->xc_flags & VMBUS_XACT_CTXF_DESTROY) == 0), &ctx->xc_lock, 0,
 			    "wxact", 1000);
-			uk_pr_info("[vmbus_xact_wait1] ctx: %p woke up\n");
+			uk_pr_debug("[%s] ctx: %p woke up\n", __func__, ctx);
 		} else {
-			uk_pr_info("[vmbus_xact_wait1] ctx: %p, delay\n", ctx);
+			uk_pr_debug("[%s] ctx: %p, delay\n", __func__, ctx);
 			mtx_unlock(&ctx->xc_lock);
 			DELAY(1000);
 			mtx_lock(&ctx->xc_lock);
@@ -389,7 +389,7 @@ vmbus_xact_wait1(struct vmbus_xact *xact, size_t *resp_len,
 
 	mtx_unlock(&ctx->xc_lock);
 
-	uk_pr_info("[vmbus_xact_wait1] ctx: %p, end\n", ctx);
+	// uk_pr_info("[%s] ctx: %p, end\n", __func__, ctx);
 
 	return (resp);
 }
@@ -482,7 +482,7 @@ vmbus_xact_wakeup(struct vmbus_xact *xact, const void *data, size_t dlen)
 	mtx_unlock(&ctx->xc_lock);
 
 	if (do_wakeup)
-		wakeup(&ctx->xc_active);
+		wakeup(&ctx->xc_active->x_wq);
 	
 	uk_pr_info("[vmbus_xact_wakeup] ctx: %p, end\n", ctx);
 }

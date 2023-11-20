@@ -289,7 +289,7 @@ int
 vmbus_msghc_exec_noresult(struct vmbus_msghc *mh)
 {
 	// sbintime_t time = SBT_1MS;
-	int time = 1000000;
+	int time = 100;
 	volatile int i;
 	struct hypercall_postmsg_in *inprm;
 	bus_addr_t inprm_paddr;
@@ -320,6 +320,7 @@ vmbus_msghc_exec_noresult(struct vmbus_msghc *mh)
 
 	for (i = 0; i < HC_RETRY_MAX; ++i) {
 		uint64_t status;
+		__nsec start, now;
 
 		status = hypercall_post_message(inprm_paddr);
 		// uk_pr_info("vmbus_msghc_exec_noresult %lu\n", status);
@@ -328,9 +329,11 @@ vmbus_msghc_exec_noresult(struct vmbus_msghc *mh)
 		// pause_sbt("hcpmsg", time, 0, C_HARDCLOCK);
 		// if (time < SBT_1S * 2)
 		// 	time *= 2;
-		for (ii = 0; ii < time; ii++) {
+		start = ukplat_monotonic_clock();
+		do {
+			now = ukplat_monotonic_clock();
+		} while (now < start + time);
 
-		}
 		time *= 2;
 
 		/* Restore input parameter and try again */
@@ -349,12 +352,12 @@ vmbus_msghc_exec(struct vmbus_softc *sc __unused, struct vmbus_msghc *mh)
 {
 	int error;
 
-	// uk_pr_info("vmbus_msghc_exec start\n");
+	// uk_pr_debug("[%s] start\n", __func__);
 	vmbus_xact_activate(mh->mh_xact);
 	error = vmbus_msghc_exec_noresult(mh);
 	if (error)
 		vmbus_xact_deactivate(mh->mh_xact);
-	// uk_pr_info("vmbus_msghc_exec end\n");
+	// uk_pr_debug("[%s] end\n", __func__);
 	return error;
 }
 
@@ -370,7 +373,7 @@ vmbus_msghc_wait_result(struct vmbus_softc *sc __unused, struct vmbus_msghc *mh)
 {
 	size_t resp_len;
 
-	uk_pr_info("vmbus_msghc_wait_result\n");
+	// uk_pr_info("[%s] enter\n", __func__);
 	return (vmbus_xact_wait(mh->mh_xact, &resp_len));
 }
 
@@ -556,26 +559,26 @@ vmbus_scan_done_task(void *xsc)
 {
 	struct vmbus_softc *sc = xsc;
 
-	uk_pr_info("[vmbus_scan_done] start\n");
+	uk_pr_info("[%s] start\n", __func__);
 
 	// bus_topo_lock();
 	sc->vmbus_scandone = true;
 	// bus_topo_unlock();
 	wakeup(&sc->vmbus_scandone_wq);
 
-	uk_pr_info("[vmbus_scan_done] end\n");
+	uk_pr_info("[%s] end\n", __func__);
 }
 
 static void
 vmbus_scan_done(struct vmbus_softc *sc,
     const struct vmbus_message *msg __unused)
 {
-	uk_pr_info("[vmbus_scan_done] start\n");
+	uk_pr_info("[%s] start\n", __func__);
 	// taskqueue_enqueue(sc->vmbus_devtq, &sc->vmbus_scandone_task);
 	sc->vmbus_dev_thread = uk_thread_create("vmbus_dev", sc->vmbus_scandone_task.ta_func, sc->vmbus_scandone_task.ta_context);
 	if (PTRISERR(sc->vmbus_dev_thread))
-		uk_pr_info("[vmbus_scan_done] Error creating thread: %d\n", PTR2ERR(sc->vmbus_dev_thread));
-	uk_pr_info("[vmbus_scan_done] end\n");
+		uk_pr_info("[%s] Error creating thread: %d\n", __func__, PTR2ERR(sc->vmbus_dev_thread));
+	uk_pr_info("[%s] end\n", __func__);
 }
 
 static int
@@ -628,7 +631,8 @@ vmbus_scan(struct vmbus_softc *sc)
 		// mtx_sleep(&sc->vmbus_scandone, bus_topo_mtx(), 0, "vmbusdev", 0);
 		// mtx_sleep(&sc->vmbus_scandone_wq, sc->vmbus_scandone, NULL, 0, "vmbusdev", 0);
 	// }
-	while (!sc->vmbus_scandone || sc->vmbus_scancount || !sc->vmbus_scandone) {
+	while (!(sc->vmbus_scandone && !sc->vmbus_scancount && sc->vmbus_probedone)) {
+		uk_pr_debug("[%s] sc->vmbus_scandone: %d, sc->vmbus_scancount: %d, sc->vmbus_probedone: %d\n", __func__, sc->vmbus_scandone, sc->vmbus_scancount, sc->vmbus_probedone);
 		//mtx_sleep(&sc->vmbus_scandone, bus_topo_mtx(), 0, "vmbusdev", 0);
 		mtx_sleep(&sc->vmbus_scandone_wq, (sc->vmbus_scandone && !sc->vmbus_scancount && sc->vmbus_probedone), NULL, 0, "vmbusdev", 0);
 	}
@@ -666,7 +670,7 @@ vmbus_chanmsg_handle(struct vmbus_softc *sc, const struct vmbus_message *msg)
 	vmbus_chanmsg_proc_t msg_proc;
 	uint32_t msg_type;
 
-	uk_pr_info("[vmbus_chanmsg_handle] start\n");
+	uk_pr_info("[%s] start\n", __func__);
 
 	msg_type = ((const struct vmbus_chanmsg_hdr *)msg->msg_data)->chm_type;
 	if (msg_type >= VMBUS_CHANMSG_TYPE_MAX) {
@@ -682,7 +686,7 @@ vmbus_chanmsg_handle(struct vmbus_softc *sc, const struct vmbus_message *msg)
 	/* Channel specific processing */
 	vmbus_chan_msgproc(sc, msg);
 
-	uk_pr_info("[vmbus_chanmsg_handle] end\n");
+	uk_pr_info("[%s] end\n", __func__);
 }
 
 void
@@ -691,16 +695,16 @@ vmbus_msg_task(void *xsc)
 	struct vmbus_softc *sc = xsc;
 	volatile struct vmbus_message *msg;
 
-	uk_pr_info("[vmbus_msg_task] start\n");
+	uk_pr_info("[%s] start\n", __func__);
 
 	msg = VMBUS_PCPU_GET(sc, message, curcpu) + VMBUS_SINT_MESSAGE;
 	for (;;) { 
 		if (msg->msg_type == HYPERV_MSGTYPE_NONE) {
-			uk_pr_info("[vmbus_msg_task] HYPERV_MSGTYPE_NONE\n");
+			uk_pr_info("[%s] HYPERV_MSGTYPE_NONE\n", __func__);
 			/* No message */
 			break;
 		} else if (msg->msg_type == HYPERV_MSGTYPE_CHANNEL) {
-			uk_pr_info("[vmbus_msg_task] HYPERV_MSGTYPE_CHANNEL\n");
+			uk_pr_info("[%s] HYPERV_MSGTYPE_CHANNEL\n", __func__);
 			/* Channel message */
 			vmbus_chanmsg_handle(sc,
 			    __DEVOLATILE(const struct vmbus_message *, msg));
@@ -724,10 +728,12 @@ vmbus_msg_task(void *xsc)
 			 * This will cause message queue rescan to possibly
 			 * deliver another msg from the hypervisor
 			 */
-			uk_pr_info("[vmbus_msg_task] message queue rescan\n");
+			uk_pr_info("[%s] message queue rescan\n", __func__);
 			wrmsrl(MSR_HV_EOM, 0);
 		}
 	}
+
+	uk_pr_info("[%s] end\n", __func__);
 }
 
 // static __inline int
@@ -941,7 +947,7 @@ vmbus_page_alloc(struct vmbus_softc *sc)
 {
 	uint8_t *evtflags;
 	int cpu;
-	uk_pr_info("vmbus_page_alloc start\n");
+	uk_pr_info("[%s] start\n", __func__);
 
 // 	CPU_FOREACH(cpu) {
 		cpu = 0;
@@ -994,7 +1000,7 @@ vmbus_page_alloc(struct vmbus_softc *sc)
 		return ENOMEM;
 	sc->vmbus_mnf2_paddr = ukplat_virt_to_phys(sc->vmbus_mnf2);
 
-	uk_pr_info("vmbus_page_alloc end\n");
+	uk_pr_info("[%s] end\n", __func__);
 	return 0;
 }
 
@@ -1038,7 +1044,9 @@ static int
 vmbus_intr_setup(struct vmbus_softc *sc)
 {
 	int cpu;
-	uk_pr_info("vmbus_intr_setup start\n");
+	
+	uk_pr_info("[%s] start\n", __func__);
+
 //	CPU_FOREACH(cpu) {
 		cpu = 0;
 // 		char buf[MAXCOMLEN + 1];
@@ -1105,7 +1113,7 @@ vmbus_intr_setup(struct vmbus_softc *sc)
 		device_printf(sc->vmbus_dev, "vmbus IDT vector %d\n",
 		    sc->vmbus_idtvec);
 	}
-	uk_pr_info("vmbus_intr_setup end\n");
+	uk_pr_info("[%s] end\n", __func__);
 	return 0;
 }
 
@@ -1937,7 +1945,7 @@ static int vmbus_probe_device(struct vmbus_driver *drv,
 	int err;
 	struct vmbus_device *dev;
 
-	uk_pr_info("[vmbus_probe_device] start\n");
+	uk_pr_debug("[vmbus_probe_device] start\n");
 
 	vmbus_sc->vmbus_probedone = true;
 
@@ -1955,8 +1963,7 @@ static int vmbus_probe_device(struct vmbus_driver *drv,
 		uk_free(vbh.a, dev);
 	}
 
-
-	uk_pr_info("[vmbus_probe_device] end\n");
+	uk_pr_debug("[vmbus_probe_device] end\n");
 	return err;
 }
 
@@ -1966,13 +1973,13 @@ static int vmbus_probe_device_type(struct vmbus_channel *chan)
 	char **devices = NULL;
 	int err = 0;
 
-	uk_pr_info("[vmbus_probe_device_type] start\n");
+	uk_pr_debug("[%s] start\n", __func__);
 
 	drv = vmbus_find_driver(&chan->ch_guid_type);
 	if (!drv) {
 		uk_pr_warn("No driver for device type: %d\n", chan->ch_guid_inst.hv_guid[0]);
 		atomic_subtract_int(&vmbus_sc->vmbus_scancount, 1);
-		uk_pr_info("[vmbus_chan_msgproc_choffer] scancount decrement: %u\n", vmbus_sc->vmbus_scancount);
+		uk_pr_debug("[%s] no driver, vmbus_scancount decrement: %u\n", __func__, vmbus_sc->vmbus_scancount);
 		wakeup(&vmbus_sc->vmbus_scandone_wq);
 		return 0;
 	}
@@ -1980,10 +1987,10 @@ static int vmbus_probe_device_type(struct vmbus_channel *chan)
 	err = vmbus_probe_device(drv, chan);
 
 	atomic_subtract_int(&vmbus_sc->vmbus_scancount, 1);
-	uk_pr_info("[vmbus_chan_msgproc_choffer] scancount decrement: %u\n", vmbus_sc->vmbus_scancount);
+	uk_pr_debug("[%s] vmbus_scancount decrement: %u\n", __func__, vmbus_sc->vmbus_scancount);
 	wakeup(&vmbus_sc->vmbus_scandone_wq);
 
-	uk_pr_info("[vmbus_probe_device_type] end error: %d\n", err);
+	uk_pr_debug("[%s] end error: %d\n", __func__, err);
 	return err;
 }
 

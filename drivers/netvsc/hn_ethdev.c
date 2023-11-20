@@ -46,6 +46,11 @@
 /* The max number of retry when hot adding a VF device */
 #define NETVSC_MAX_HOTADD_RETRY 10
 
+#define  HN_INTR_EN   (1 << 0)
+#define  HN_INTR_EN_MASK   (1)
+#define  HN_INTR_USR_EN   (1 << 1)
+#define  HN_INTR_USR_EN_MASK   (2)
+
 // struct hn_xstats_name_off {
 // 	char name[RTE_ETH_XSTATS_NAME_SIZE];
 // 	unsigned int offset;
@@ -979,7 +984,7 @@ hn_dev_start(struct uk_netdev *dev)
 	// struct hn_data *hv = dev->data->dev_private;
 	struct hn_data *hv;
 	int error;
-	uk_pr_info("[hn_dev_start] enter\n");
+	uk_pr_info("[%s] enter\n", __func__);
 
 	hndev = to_hn_dev(dev);
 	hv = (struct hn_data *)hndev->dev_private;
@@ -998,7 +1003,7 @@ hn_dev_start(struct uk_netdev *dev)
 				      NDIS_PACKET_TYPE_BROADCAST |
 				      NDIS_PACKET_TYPE_ALL_MULTICAST |
 				      NDIS_PACKET_TYPE_DIRECTED);
-	uk_pr_info("[hn_dev_start] error: %d\n", error);
+	uk_pr_info("[%s] error: %d\n", __func__, error);
 	if (error)
 		return error;
 
@@ -1010,7 +1015,7 @@ hn_dev_start(struct uk_netdev *dev)
 //	if (error == 0)
 //		hn_dev_link_update(dev, 0);
 
-	uk_pr_info("[hn_dev_start] end\n");
+	uk_pr_info("[%s] end\n", __func__);
 	return error;
 }
 
@@ -1094,13 +1099,13 @@ hn_attach(struct hn_data *hv, unsigned int mtu)
 
 	/* Attach NVS */
 	error = hn_nvs_attach(hv, mtu);
-	uk_pr_debug("[hn_attach] hn_nvs_attach error: %d\n", error);
+	uk_pr_debug("[%s] hn_nvs_attach error: %d\n", __func__, error);
 	if (error)
 		goto failed_nvs;
 
 	/* Attach RNDIS */
 	error = hn_rndis_attach(hv);
-	uk_pr_debug("[hn_attach] hn_rndis_attach error: %d\n", error);
+	uk_pr_debug("[%s] hn_rndis_attach error: %d\n", __func__, error);
 	if (error)
 		goto failed_rndis;
 
@@ -1110,8 +1115,8 @@ hn_attach(struct hn_data *hv, unsigned int mtu)
 	 * the RNDIS rxfilter is _not_ zero on the hypervisor side
 	 * after the successful RNDIS initialization.
 	 */
-	//hn_rndis_set_rxfilter(hv, NDIS_PACKET_TYPE_NONE);
-	uk_pr_debug("[hn_attach] hn_rndis_set_rxfilter done\n");
+	hn_rndis_set_rxfilter(hv, NDIS_PACKET_TYPE_NONE);
+	uk_pr_debug("[%s] hn_rndis_set_rxfilter done\n", __func__);
 	return 0;
 failed_rndis:
 	hn_nvs_detach(hv);
@@ -1361,7 +1366,7 @@ static int hn_rxtx_alloc(struct hn_dev *hndev,
 		const struct uk_netdev_conf *conf)
 {
 	int rc = 0, i;
-	uk_pr_info("[hn_rxtx_alloc] enter\n");
+	uk_pr_info("[%s] enter\n", __func__);
 
 	if (conf->nb_tx_queues != conf->nb_rx_queues) {
 		uk_pr_err("Different number of queues not supported\n");
@@ -1422,7 +1427,7 @@ hn_create_tx_data(struct hn_data *hv, int ring_cnt)
 // 	}
 	hv->chim_res.addr = hyperv_mem_alloc(hv->a, HN_CHIM_SIZE);
 	if (hv->chim_res.addr == NULL) {
-	uk_pr_err("allocate txbuf failed\n");
+		uk_pr_err("allocate txbuf failed\n");
 		return ENOMEM;
 	}
 	hv->chim_res.phys_addr = ukplat_virt_to_phys(hv->chim_res.addr);
@@ -1457,7 +1462,7 @@ static struct uk_netdev_tx_queue *hn_dev_txq_setup(struct uk_netdev *n,
 	// netif_tx_sring_t *sring;
 	// int err = -ENOMEM;
 
-	uk_pr_info("[hn_dev_txq_setup] start queue_id: %d, nb_desc: %u\n", queue_id, nb_desc);
+	uk_pr_info("[%s] start queue_id: %d, nb_desc: %u\n", __func__, queue_id, nb_desc);
 
 	UK_ASSERT(n != NULL);
 
@@ -1479,7 +1484,9 @@ static struct uk_netdev_tx_queue *hn_dev_txq_setup(struct uk_netdev *n,
 	struct uk_netdev_info netdev_info;
 	uk_netdev_info_get(n, &netdev_info);
 
-	txq->tx_rndis_pool = uk_allocpool_alloc(uk_alloc_get_default(), 16, sizeof(struct rndis_packet_msg),
+	// txq->tx_rndis_pool = uk_allocpool_alloc(uk_alloc_get_default(), 16, sizeof(struct rndis_packet_msg),
+    //                       HN_RNDIS_PKT_ALIGNED);
+	txq->tx_rndis_pool = uk_allocpool_alloc(uk_alloc_get_default(), 16, HN_RNDIS_PKT_ALIGNED,
                           HN_RNDIS_PKT_ALIGNED);
 	if (txq->tx_rndis_pool == NULL) {
 // 		PMD_DRV_LOG(ERR,
@@ -1509,7 +1516,7 @@ static struct uk_netdev_tx_queue *hn_dev_txq_setup(struct uk_netdev *n,
 	txq->initialized = true;
 	hndev->txqs_num++;
 
-	uk_pr_info("[hn_dev_txq_setup] end\n");
+	uk_pr_info("[%s] end\n", __func__);
 
 	return txq;
 error:
@@ -1526,7 +1533,7 @@ static struct uk_netdev_rx_queue *hn_dev_rxq_setup(struct uk_netdev *n,
 	struct uk_netdev_rx_queue *rxq;
 	// netif_rx_sring_t *sring;
 
-	uk_pr_info("[hn_dev_rxq_setup] start queue_id: %u, nb_desc: %u\n", queue_id, nb_desc);
+	uk_pr_info("[%s] start queue_id: %u, nb_desc: %u\n", __func__, queue_id, nb_desc);
 
 	UK_ASSERT(n != NULL);
 	UK_ASSERT(conf != NULL);
@@ -1601,7 +1608,7 @@ static struct uk_netdev_rx_queue *hn_dev_rxq_setup(struct uk_netdev *n,
 	rxq->initialized = true;
 	hndev->rxqs_num++;
 
-	uk_pr_info("[hn_dev_rxq_setup] end\n");
+	uk_pr_info("[%s] end\n", __func__);
 
 	return rxq;
 }
@@ -1611,8 +1618,8 @@ static int hn_dev_rx_intr_enable(struct uk_netdev *n __unused,
 {
 	int rc;
 
-	// TODO: PV
-	uk_pr_info("[hn_dev_rx_intr_enable] start\n");
+	// TODO: PV - Enable interrupts
+	uk_pr_info("[%s] start\n", __func__);
 
 	UK_ASSERT(n != NULL);
 	UK_ASSERT(rxq != NULL);
@@ -1627,24 +1634,23 @@ static int hn_dev_rx_intr_enable(struct uk_netdev *n __unused,
 	//  * be enabled automatically if the interrupt could not be enabled now
 	//  * due to data in the queue.
 	//  */
-	// rxq->intr_enabled = NETFRONT_INTR_USR_EN;
+	rxq->intr_enabled = HN_INTR_USR_EN;
 	// rc = hn_rxq_intr_enable(rxq);
 	// if (!rc)
-	// 	rxq->intr_enabled |= NETFRONT_INTR_EN;
-	rxq->intr_enabled = 1;
+	rxq->intr_enabled |= HN_INTR_EN;
 
 	// return rc;
 
-	uk_pr_info("[hn_dev_rx_intr_enable] end\n");
+	uk_pr_info("[%s] end\n", __func__);
 	return 0;
 }
 
 static int hn_dev_rx_intr_disable(struct uk_netdev *n __unused,
 		struct uk_netdev_rx_queue *rxq)
 {
-	uk_pr_info("[hn_dev_rx_intr_disable] start\n");
+	uk_pr_info("[%s] start\n", __func__);
 
-	// TODO: PV
+	// TODO: PV - Disable interrupts
 	UK_ASSERT(n != NULL);
 	UK_ASSERT(rxq != NULL);
 	// UK_ASSERT(&rxq->hn_dev->netdev == n);
@@ -1653,7 +1659,7 @@ static int hn_dev_rx_intr_disable(struct uk_netdev *n __unused,
 	// mask_evtchn(rxq->evtchn);
 	rxq->intr_enabled = 0;
 
-	uk_pr_info("[hn_dev_rx_intr_disable] end\n");
+	uk_pr_info("[%s] end\n", __func__);
 	return 0;
 }
 
@@ -1665,11 +1671,12 @@ static int hn_dev_txq_info_get(struct uk_netdev *n,
 	struct uk_netdev_tx_queue *txq;
 	int rc = 0;
 
-	uk_pr_info("[hn_dev_txq_info_get] start\n");
+	uk_pr_info("[%s] start\n", __func__);
 
 	UK_ASSERT(n != NULL);
 	UK_ASSERT(qinfo != NULL);
 
+	// TODO: PV - implemented this function
 	// hndev = to_hn_dev(n);
 	// if (unlikely(queue_id >= hndev->max_queue_pairs)) {
 	// 	uk_pr_err("Invalid queue_id %"__PRIu16"\n", queue_id);
@@ -1683,7 +1690,7 @@ static int hn_dev_txq_info_get(struct uk_netdev *n,
 	// qinfo->nb_is_power_of_two = 1;
 
 exit:
-	uk_pr_info("[hn_dev_txq_info_get] end\n");
+	uk_pr_info("[%s] end\n", __func__);
 	return rc;
 }
 
@@ -1695,11 +1702,12 @@ static int hn_dev_rxq_info_get(struct uk_netdev *n,
 	struct uk_netdev_rx_queue *rxq;
 	int rc = 0;
 
-	uk_pr_info("[hn_dev_rxq_info_get] start\n");
+	uk_pr_info("[%s] start\n", __func__);
 
 	UK_ASSERT(n != NULL);
 	UK_ASSERT(qinfo != NULL);
 
+	// TODO: PV - Implement this functions
 	// hndev = to_hn_dev(n);
 	// if (unlikely(queue_id >= hndev->max_queue_pairs)) {
 	// 	uk_pr_err("Invalid queue id: %"__PRIu16"\n", queue_id);
@@ -1713,7 +1721,7 @@ static int hn_dev_rxq_info_get(struct uk_netdev *n,
 	// qinfo->nb_is_power_of_two = 1;
 
 exit:
-	uk_pr_info("[hn_dev_rxq_info_get] enter\n");
+	uk_pr_info("[%s] enter\n", __func__);
 	return rc;
 }
 
@@ -1724,7 +1732,7 @@ static int hn_dev_configure(struct uk_netdev *n,
 	struct hn_dev *hndev;
 	struct hn_data *hv;
 	
-	uk_pr_info("[hn_dev_configure] start\n");
+	uk_pr_info("[%s] start\n", __func__);
 
 	UK_ASSERT(n != NULL);
 	UK_ASSERT(conf != NULL);
@@ -1740,24 +1748,24 @@ static int hn_dev_configure(struct uk_netdev *n,
 
 	hn_create_tx_data(hndev->dev_private, 1);
 
-	uk_pr_debug("[hn_dev_configure] Before get_eaddr\n");
+	uk_pr_debug("[%s] Before get_eaddr\n", __func__);
  	rc = hn_rndis_get_eaddr(hv, hndev->hw_addr.addr_bytes);
 	if (rc) {
 		uk_pr_info(
 			    "get eaddr failed: %d", rc);
 		goto out;
 	}
-	uk_pr_debug("[hn_dev_configure] After get_eaddr\n");
+	uk_pr_debug("[%s] After get_eaddr\n", __func__);
 
 	rc = hn_rndis_conf_offload(hv, 0, 0);
 	if (rc) {
 		uk_pr_info(
-			    "offload configure failed: %d", rc);
+			    "offload configure failed: %d\n", rc);
 		goto out;
 	}
 
 out:
-	uk_pr_info("[hn_dev_configure] end\n");
+	uk_pr_info("[%s] end\n", __func__);
 	return rc;
 }
 
@@ -1766,7 +1774,7 @@ static void hn_dev_info_get(struct uk_netdev *n,
 {
 	struct hn_dev *hndev;
 
-	uk_pr_info("[hn_dev_info_get] start\n");
+	uk_pr_info("[%s] start\n", __func__);
 
 	UK_ASSERT(n != NULL);
 	UK_ASSERT(dev_info != NULL);
@@ -1780,7 +1788,7 @@ static void hn_dev_info_get(struct uk_netdev *n,
 	dev_info->ioalign = PAGE_SIZE;
 	dev_info->features = UK_NETDEV_F_RXQ_INTR | UK_NETDEV_F_PARTIAL_CSUM;
 
-	uk_pr_info("[hn_dev_info_get] end\n");
+	uk_pr_info("[%s] end\n", __func__);
 }
 
 static const void *hn_dev_einfo_get(struct uk_netdev *n,
@@ -1788,11 +1796,11 @@ static const void *hn_dev_einfo_get(struct uk_netdev *n,
 {
 	struct hn_dev *hndev;
 
-	uk_pr_info("[hn_dev_einfo_get] start einfo_type: %d\n", einfo_type);
+	uk_pr_info("[%s] start einfo_type: %d\n", __func__, einfo_type);
 
 	UK_ASSERT(n != NULL);
 
-	// TODO: PV
+	// TODO: PV - implement this function
 	// hndev = to_hn_dev(n);
 	// switch (einfo_type) {
 	// case UK_NETDEV_IPV4_ADDR_STR:
@@ -1806,7 +1814,7 @@ static const void *hn_dev_einfo_get(struct uk_netdev *n,
 	// }
 
 	/* type not supported */
-	uk_pr_info("[hn_dev_einfo_get] end\n");
+	uk_pr_info("[%s] end\n", __func__);
 	return NULL;
 }
 
@@ -1817,7 +1825,8 @@ static const struct uk_hwaddr *hn_dev_mac_get(struct uk_netdev *n)
 	UK_ASSERT(n != NULL);
 
 	hndev = to_hn_dev(n);
-	uk_pr_info("[hn_dev_mac_get] enter hw_addr: %02X:%02X:%02X:%02X:%02X:%02X\n",
+	uk_pr_info("[%s] enter hw_addr: %02X:%02X:%02X:%02X:%02X:%02X\n",
+			__func__,
 			hndev->hw_addr.addr_bytes[0], hndev->hw_addr.addr_bytes[1],
 			hndev->hw_addr.addr_bytes[2], hndev->hw_addr.addr_bytes[3],
 			hndev->hw_addr.addr_bytes[4], hndev->hw_addr.addr_bytes[5]);
@@ -1831,7 +1840,7 @@ static uint16_t hn_dev_mtu_get(struct uk_netdev *n)
 	UK_ASSERT(n != NULL);
 
 	hndev = to_hn_dev(n);
-	uk_pr_info("[hn_dev_mtu_get] enter hndev->mtu: %u\n", hndev->mtu);
+	uk_pr_info("[%s] enter hndev->mtu: %u\n", __func__, hndev->mtu);
 	return hndev->mtu;
 }
 
@@ -1840,7 +1849,7 @@ static unsigned int hn_dev_promisc_get(struct uk_netdev *n)
 	struct hn_dev *hndev;
 
 	UK_ASSERT(n != NULL);
-	uk_pr_info("[hn_dev_promisc_get] enter\n");
+	uk_pr_info("[%s] enter\n", __func__);
 	hndev = to_hn_dev(n);
 	return hndev->promisc;
 }
@@ -1852,7 +1861,7 @@ static int hn_dev_probe(struct uk_netdev *n)
 
 	UK_ASSERT(n != NULL);
 
-	uk_pr_info("[hn_dev_probe] start\n");
+	uk_pr_info("[%s] start\n", __func__);
 
 	hndev = to_hn_dev(n);
 	rc = 0;
@@ -1864,7 +1873,7 @@ static int hn_dev_probe(struct uk_netdev *n)
 	// }
 
 out:
-	uk_pr_info("[hn_dev_probe] end\n");
+	uk_pr_info("[%s] end\n", __func__);
 	return rc;	
 }
 
@@ -1893,6 +1902,8 @@ hn_chan_attach(struct hn_dev *hndev, struct hn_data *hv, struct vmbus_channel *c
 	//struct hn_tx_ring *txr = NULL;
 	int idx, error;
 
+	uk_pr_debug("[%s] start\n", __func__);
+
 	//idx = vmbus_chan_subidx(chan);
 	idx = 0;
 
@@ -1911,7 +1922,7 @@ hn_chan_attach(struct hn_dev *hndev, struct hn_data *hv, struct vmbus_channel *c
 	//if (bootverbose) {
 		// if_printf(sc->hn_ifp, "link RX ring %d to chan%u\n",
 		//     idx, vmbus_chan_id(chan));
-		uk_pr_info("link RX ring %d to chan%u\n",
+		uk_pr_debug("link RX ring %d to chan%u\n",
 		    idx, vmbus_chan_id(chan));
 	//}
 
@@ -1938,12 +1949,12 @@ hn_chan_attach(struct hn_dev *hndev, struct hn_data *hv, struct vmbus_channel *c
 	// 	&rxr->hn_br_dma, BUS_DMA_WAITOK);
 	hndev->br_res[idx].addr = hyperv_mem_alloc(hv->a, HN_TXBR_SIZE + HN_RXBR_SIZE);
 	if (hndev->br_res[idx].addr == NULL) {
-	uk_pr_err("allocate bufring failed\n");
+		uk_pr_err("allocate bufring failed\n");
 		return ENOMEM;
 	}
 	hndev->br_res[idx].phys_addr = ukplat_virt_to_phys(hndev->br_res[idx].addr);
 	hndev->br_res[idx].len = HN_TXBR_SIZE + HN_RXBR_SIZE;
-	uk_pr_debug("addr: %p, paddr: %p\n", hndev->br_res[idx].addr, hndev->br_res[idx].phys_addr);
+	// uk_pr_debug("addr: %p, paddr: %p\n", hndev->br_res[idx].addr, hndev->br_res[idx].phys_addr);
 
 	/*
 	 * Open this channel
@@ -1973,12 +1984,14 @@ hn_chan_attach(struct hn_dev *hndev, struct hn_data *hv, struct vmbus_channel *c
 
 	hndev->br_res[idx].phys_addr = chan->ch_bufring_gpadl;
 
+	uk_pr_debug("[%s] end error: %d\n", __func__, error);
+
 	return (error);
 }
 
 static int hn_drv_add_dev(struct vmbus_device *vmbusdev)
 {
-	uk_pr_info("[hn_drv_add_dev] enter\n");
+	uk_pr_debug("[%s] enter\n", __func__);
 
 	struct hn_dev *hndev;
 	struct hn_data *hv;
@@ -1993,14 +2006,14 @@ static int hn_drv_add_dev(struct vmbus_device *vmbusdev)
 
 	hndev = uk_calloc(drv_allocator, 1, sizeof(*hndev));
 	if (!hndev) {
-			uk_pr_info("[hn_drv_add_dev] error uk_alloc\n");
+			uk_pr_info("[%s] error uk_alloc\n", __func__);
 		rc = -ENOMEM;
 		goto err_out;
 	}
 
 	hndev->dev_private = uk_calloc(drv_allocator, 1, sizeof(struct hn_data));
 	if (!hndev->dev_private) {
-		uk_pr_info("[hn_drv_add_dev] error uk_calloc hn_data\n");
+		uk_pr_info("[%s] error uk_calloc hn_data\n", __func__);
 		rc = -ENOMEM;
 		goto err_out;
 	}
@@ -2018,32 +2031,32 @@ static int hn_drv_add_dev(struct vmbus_device *vmbusdev)
 	hv->primary = uk_calloc(drv_allocator,
 		1, sizeof(*hv->primary));
 	if (unlikely(!hv->primary)) {
-		uk_pr_err("[hn_drv_add_dev] Failed to allocate memory for primary Rx queue\n");
+		uk_pr_err("[%s] Failed to allocate memory for primary Rx queue\n", __func__);
 		rc = -ENOMEM;
 	}
 	hv->channels[0] = (struct vmbus_channel *)vmbusdev->priv;
 	hv->primary->chan = hv->channels[0];
 	hv->primary->hv = hv;
 
-	uk_pr_debug("[hn_drv_add_dev] hv->primary: %p, hv->channels[0]: %p\n", hv->primary, hv->channels[0]);
+	// uk_pr_info("[%s] hv->primary: %p, hv->channels[0]: %p\n", __func__, hv->primary, hv->channels[0]);
 
 	err = hn_chan_attach(hndev, hv, hv->channels[0]);
-	uk_pr_debug("[hn_drv_add_dev] hn_chan_attach err: %d\n", err);
+	// uk_pr_debug("[%s] hn_chan_attach err: %d\n", __func__, err);
 
 	hv->rxbuf_res = uk_calloc(drv_allocator, 1, sizeof(*hv->rxbuf_res));
 	if (!hv->rxbuf_res) {
-		uk_pr_info("[hn_drv_add_dev] error uk_calloc rxbuf_res\n");
+		uk_pr_info("[%s] error uk_calloc rxbuf_res\n", __func__);
 		rc = -ENOMEM;
 	}
 
 	hv->rxbuf_res->addr = hyperv_mem_alloc(hv->a, HN_RXBUF_SIZE);
 	if (hv->rxbuf_res->addr == NULL) {
-		uk_pr_err("[hn_drv_add_dev] allocate bufring failed\n");
+		uk_pr_err("[%s] allocate bufring failed\n", __func__);
 		return -ENOMEM;
 	}
 	hv->rxbuf_res->phys_addr = ukplat_virt_to_phys(hv->rxbuf_res->addr);
 	hv->rxbuf_res->len = HN_RXBUF_SIZE;
-	uk_pr_debug("[hn_drv_add_dev] addr: %p, paddr: %p\n", hv->rxbuf_res->addr, hv->rxbuf_res->phys_addr);
+	// uk_pr_info("[%s] addr: %p, paddr: %p\n", __func__, hv->rxbuf_res->addr, hv->rxbuf_res->phys_addr);
 
 	/*
 		* Connect the RXBUF GPADL to the primary channel.
@@ -2062,6 +2075,7 @@ static int hn_drv_add_dev(struct vmbus_device *vmbusdev)
 	}
 	hv->rxbuf_res->phys_addr = rxbuf_gpadl;
 
+	// uk_pr_debug("[%s] after vmbus_chan_gpadl_connect\n", __func__);
 
 	/* START From FreeBSD */
 
@@ -2074,12 +2088,12 @@ static int hn_drv_add_dev(struct vmbus_device *vmbusdev)
 	 */
 	hv->chim_res.addr = hyperv_mem_alloc(hv->a, HN_CHIM_SIZE);
 	if (hv->chim_res.addr == NULL) {
-		uk_pr_err("[hn_drv_add_dev] allocate bufring failed\n");
+		uk_pr_err("[%s] allocate bufring failed\n", __func__);
 		return -ENOMEM;
 	}
 	hv->chim_res.phys_addr = ukplat_virt_to_phys(hv->chim_res.addr);
 	hv->chim_res.len = HN_RXBUF_SIZE;
-	uk_pr_debug("[hn_drv_add_dev] chim_res.addr: %p, chim_res.paddr: %p\n", hv->chim_res.addr, hv->chim_res.phys_addr);
+	// uk_pr_debug("[%s] chim_res.addr: %p, chim_res.paddr: %p\n", __func__, hv->chim_res.addr, hv->chim_res.phys_addr);
 
 	uint32_t chim_gpadl = 0;
 	err = vmbus_chan_gpadl_connect(hv->channels[0],
@@ -2093,7 +2107,7 @@ static int hn_drv_add_dev(struct vmbus_device *vmbusdev)
 	/* END */
 
 	err = hn_attach(hv, RTE_ETHER_MTU);
-	uk_pr_debug("[hn_drv_add_dev] hn_attach err: %d\n", err);
+	// uk_pr_info("[%s] hn_attach err: %d\n", __func__, err);
 	if  (err)
 		goto failed;
 
@@ -2109,7 +2123,21 @@ static int hn_drv_add_dev(struct vmbus_device *vmbusdev)
 	if (err)
 		goto failed;
 
-	uk_pr_debug("hn_drv_add_dev] uk_alloc_availmem: %d, uk_alloc_pavailmem: %d\n", uk_alloc_availmem(drv_allocator), uk_alloc_pavailmem(drv_allocator));
+	//uk_pr_debug("[hn_drv_add_dev] Before offload 1\n");
+	//err = hn_rndis_conf_offload(hv, 0, 0);
+	//if (err) {
+	//	uk_pr_info(
+	//		    "offload configure failed: %d", err);
+	//}
+
+	//uk_pr_debug("[hn_drv_add_dev] Before offload 2\n");
+	//err = hn_rndis_conf_offload(hv, 0, 0);
+	//if (err) {
+	//	uk_pr_info(
+	//		    "offload configure failed: %d", err);
+	//}
+
+	// uk_pr_info("%s] uk_alloc_availmem: %d, uk_alloc_pavailmem: %d\n", __func__, uk_alloc_availmem(drv_allocator), uk_alloc_pavailmem(drv_allocator));
 
 	rc = uk_netdev_drv_register(&hndev->netdev, drv_allocator, DRIVER_NAME);
 	if (rc < 0) {
@@ -2118,29 +2146,19 @@ static int hn_drv_add_dev(struct vmbus_device *vmbusdev)
 		goto err_register;
 	}
 
-	uk_pr_debug("[hn_drv_add_dev] Before offload\n");
+	// uk_pr_info("[%s] Before offload 3\n", __func__);
 	err = hn_rndis_conf_offload(hv, 0, 0);
 	if (err) {
 		uk_pr_info(
 			    "offload configure failed: %d", err);
-		goto out;
+		//goto out;
 	}
-	uk_pr_debug("[hn_drv_add_dev] After offload\n");
+	// uk_pr_info("[%s] After offload\n", __func__);
 
 	hndev->uid = rc;	
 	rc = 0;
 
-	// ret = eth_hn_dev_init(eth_dev);
-	// if (ret) {
-	// 	eth_dev_vmbus_release(eth_dev);
-	// 	rte_dev_event_monitor_stop();
-	// } else {
-	// 	rte_eth_dev_probing_finish(eth_dev);
-	// }
-
-	// return ret;
-
-	uk_pr_info("[hn_drv_add_dev] end\n");
+	// uk_pr_debug("[%s] end\n", __func__);
 out:
 	return rc;
 err_register:
@@ -2152,7 +2170,7 @@ err_out:
 
 static int hn_drv_init(struct uk_alloc *allocator)
 {
-	uk_pr_info("[hn_drv_init] enter\n");
+	uk_pr_info("[%s] enter\n", __func__);
 
 	/* driver initialization */
 	if (!allocator)

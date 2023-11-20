@@ -14,6 +14,7 @@
 #include <uk/netdev.h>
 #include <uk/sglist.h>
 #include <uk/spinlock.h>
+#include <uk/plat/io.h>
 
 #include "rndis.h"
 #include <vmbus/vmbus_chanvar.h>
@@ -187,6 +188,8 @@ rte_atomic32_add_return(rte_atomic32_t *v, int32_t inc)
  */
 #define RTE_ALIGN(val, align) RTE_ALIGN_CEIL(val, align)
 
+
+
 /* rte_common.h end */
 
 /*
@@ -344,7 +347,8 @@ struct hn_rx_bufinfo {
 	struct uk_netdev_rx_queue *rxq;
 	uint64_t	xactid;
  	struct rte_mbuf_ext_shared_info shinfo;
-} __rte_cache_aligned;
+} __aligned(CACHE_LINE_SIZE);
+//} __rte_cache_aligned;
 
 #define HN_INVALID_PORT	UINT16_MAX
 

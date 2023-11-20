@@ -85,7 +85,7 @@ struct hn_nvs_init_resp {
 	uint32_t	ver;	/* deprecated */
 	uint32_t	rsvd;
 	uint32_t	status;	/* NVS_STATUS_ */
-} _packed;
+} __packed;
 
 /* No response */
 struct hn_nvs_ndis_conf {

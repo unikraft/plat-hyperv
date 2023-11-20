@@ -105,7 +105,7 @@ static void			vmbus_chan_msgproc_chrescind(
 
 // static int			vmbus_chan_printf(const struct vmbus_channel *,
 // 				    const char *, ...) __printflike(2, 3);
-#define vmbus_chan_printf(chan, fmt, ...) uk_pr_info( "%p: " fmt, chan->ch_dev, ##__VA_ARGS__ )
+#define vmbus_chan_printf(chan, fmt, ...) uk_pr_debug( "%p: " fmt, chan->ch_dev, ##__VA_ARGS__ )
 
 /*
  * Vmbus channel message processing.
@@ -127,11 +127,14 @@ vmbus_chan_msgprocs[VMBUS_CHANMSG_TYPE_MAX] = {
 static __inline void
 vmbus_chan_signal(const struct vmbus_channel *chan)
 {
+	uint64_t status;
 	atomic_set_long(chan->ch_evtflag, chan->ch_evtflag_mask);
 	if (chan->ch_txflags & VMBUS_CHAN_TXF_HASMNF)
 		atomic_set_int(chan->ch_montrig, chan->ch_montrig_mask);
-	else
-		hypercall_signal_event(chan->ch_monprm_paddr);
+	else {
+		status = hypercall_signal_event(chan->ch_monprm_paddr);
+		uk_pr_debug("[%s] status: %d\n", __func__, status);
+	}
 }
 
 // static __inline void
@@ -139,6 +142,7 @@ vmbus_chan_signal(const struct vmbus_channel *chan)
 void
 vmbus_chan_signal_tx(struct vmbus_channel *chan)
 {
+	uk_pr_debug("[%s] enter\n", __func__);
 	chan->ch_txbr.txbr_intrcnt ++;
 
 	vmbus_chan_signal(chan);
@@ -395,11 +399,11 @@ vmbus_chan_open_br(struct vmbus_channel *chan, const struct vmbus_chan_br *cbr,
 	br = cbr->cbr;
 	txbr_size = cbr->cbr_txsz;
 	rxbr_size = cbr->cbr_rxsz;
-	uk_pr_debug("cbr: %p, cbr_paddr: %p\n", cbr->cbr, cbr->cbr_paddr);
-	uk_pr_debug("txbr_size: %#x, rxbr_size: %#x, PAGE_MASK: %#x, __PAGE_MASK: %#x\n", txbr_size, rxbr_size, (__PAGE_SIZE - 1));
-	uk_pr_debug("tbx_size & PAGE_MASK: %#x\n", txbr_size & (__PAGE_SIZE - 1));
-	uk_pr_debug("cbr->cbr_paddr: %#x\n", cbr->cbr_paddr);
-	uk_pr_debug("cbr->cbr_paddr & PAGE_MASK: %#x\n", cbr->cbr_paddr & (__PAGE_SIZE - 1));
+	// uk_pr_debug("[%s] cbr: %p, cbr_paddr: %p\n", __func__, cbr->cbr, cbr->cbr_paddr);
+	// uk_pr_debug("[%s] txbr_size: %#x, rxbr_size: %#x, PAGE_MASK: %#x, __PAGE_MASK: %#x\n", __func__, txbr_size, rxbr_size, (__PAGE_SIZE - 1));
+	// uk_pr_debug("[%s] tbx_size & PAGE_MASK: %#x\n", __func__, txbr_size & (__PAGE_SIZE - 1));
+	// uk_pr_debug("[%s] cbr->cbr_paddr: %#x\n", __func__, cbr->cbr_paddr);
+	// uk_pr_debug("[%s] cbr->cbr_paddr & PAGE_MASK: %#x\n", __func__, cbr->cbr_paddr & (__PAGE_SIZE - 1));
 	KASSERT((txbr_size & (__PAGE_SIZE - 1)) == 0,
 	    ("send bufring size is not multiple page"));
 	KASSERT((rxbr_size & (__PAGE_SIZE - 1)) == 0,
@@ -438,7 +442,7 @@ vmbus_chan_open_br(struct vmbus_channel *chan, const struct vmbus_chan_br *cbr,
 // 	vmbus_chan_sysctl_create(chan);
 //	vmbus_chan_poll_disable(chan);
 
-	uk_pr_info("Before vmbus_chan_gpadl_connect: txbr: %p, rxbr: %p\n", chan->ch_txbr, chan->ch_rxbr);
+	// uk_pr_info("[%s] Before vmbus_chan_gpadl_connect: txbr: %p, rxbr: %p\n", __func__, chan->ch_txbr, chan->ch_rxbr);
 
 	/*
 	 * Connect the bufrings, both RX and TX, to this channel.
@@ -452,7 +456,7 @@ vmbus_chan_open_br(struct vmbus_channel *chan, const struct vmbus_chan_br *cbr,
 
 		goto failed;
 	}
-	uk_pr_info("After vmbus_chan_gpadl_connect gpadl: %p\n", chan->ch_bufring_gpadl);
+	// uk_pr_info("[%s] After vmbus_chan_gpadl_connect gpadl: %p\n", __func__, chan->ch_bufring_gpadl);
 
 	/*
 	 * Install this channel, before it is opened, but after everything
@@ -491,11 +495,11 @@ vmbus_chan_open_br(struct vmbus_channel *chan, const struct vmbus_chan_br *cbr,
 		vmbus_msghc_put(sc, mh);
 		goto failed;
 	}
-	uk_pr_info("vmbus_msghc_exec VMBUS_CHANMSG_TYPE_CHOPEN OK\n");
+	// uk_pr_info("[%s] vmbus_msghc_exec VMBUS_CHANMSG_TYPE_CHOPEN OK\n", __func__);
 
 	for (;;) {
 		msg = vmbus_msghc_poll_result(sc, mh);
-		uk_pr_info("vmbus_msghc_poll_result msg: %p\n", msg);
+		uk_pr_info("[%s] vmbus_msghc_poll_result msg: %p\n", __func__, msg);
 		if (msg != NULL)
 			break;
 		if (vmbus_chan_is_revoked(chan)) {
@@ -509,7 +513,7 @@ vmbus_chan_open_br(struct vmbus_channel *chan, const struct vmbus_chan_br *cbr,
 			vmbus_chan_printf(chan,
 			    "chan%u is revoked, when it is being opened\n",
 			    chan->ch_id);
-			uk_pr_info("vmbus_chan_is_revoked\n");
+			uk_pr_info("[%s] vmbus_chan_is_revoked\n", __func__);
 
 			/*
 			 * XXX
@@ -522,7 +526,7 @@ vmbus_chan_open_br(struct vmbus_channel *chan, const struct vmbus_chan_br *cbr,
 			for (i = 0; i < REVOKE_LINGER; ++i) {
 				msg = vmbus_msghc_poll_result(sc, mh);
 				if (msg != NULL) {
-					uk_pr_info("vmbus_msghc_exec_cancel msg != NULL\n");
+					uk_pr_info("[%s] vmbus_msghc_exec_cancel msg != NULL\n", __func__);
 					break;
 				}
 				pause("rchopen", 1);
@@ -530,7 +534,7 @@ vmbus_chan_open_br(struct vmbus_channel *chan, const struct vmbus_chan_br *cbr,
 #undef REVOKE_LINGER
 			if (msg == NULL) {
 				vmbus_msghc_exec_cancel(sc, mh);
-				uk_pr_info("vmbus_msghc_exec_cancel msg == NULL\n");
+				uk_pr_info("[%s] vmbus_msghc_exec_cancel msg == NULL\n", __func__);
 			}
 			break;
 		}
@@ -604,12 +608,12 @@ vmbus_chan_gpadl_connect(struct vmbus_channel *chan, bus_addr_t paddr,
 	    ("GPA is not page aligned %jx", (uintmax_t)paddr));
 	page_id = paddr >> PAGE_SHIFT;
 
-	uk_pr_info("[vmbus_chan_gpadl_connect] chan%u size: %d, paddr: %p\n", chan->ch_id, size, paddr);
+	uk_pr_debug("[%s] chan%u size: %d, paddr: %p\n", __func__, chan->ch_id, size, paddr);
 
 	// range_len = __offsetof(struct vmbus_gpa_range, gpa_page[page_count]);
 	range_len = __offsetof(struct vmbus_gpa_range, page[page_count]);
 
-	uk_pr_info("[vmbus_chan_gpadl_connect] chan%u page_count: %d, page_id: %p, range_len: %d\n", chan->ch_id, page_count, page_id, range_len);
+	// uk_pr_debug("[%s] chan%u page_count: %d, page_id: %p, range_len: %d\n", __func__, chan->ch_id, page_count, page_id, range_len);
 
 	/*
 	 * We don't support multiple GPA ranges.
@@ -638,7 +642,7 @@ vmbus_chan_gpadl_connect(struct vmbus_channel *chan, bus_addr_t paddr,
 	else
 		cnt = page_count;
 	page_count -= cnt;
-	uk_pr_info("[vmbus_chan_gpadl_connect] chan%u cnt: %d, page_count: %d\n", chan->ch_id, cnt, page_count);
+	// uk_pr_debug("[%s] chan%u cnt: %d, page_count: %d\n", __func__, chan->ch_id, cnt, page_count);
 	
 	// reqsz = __offsetof(struct vmbus_chanmsg_gpadl_conn,
 	//     chm_range.gpa_page[cnt]);
@@ -684,7 +688,7 @@ vmbus_chan_gpadl_connect(struct vmbus_channel *chan, bus_addr_t paddr,
 		else
 			cnt = page_count;
 		page_count -= cnt;
-		uk_pr_info("[vmbus_chan_gpadl_connect] chan%u cnt: %d, page_count: %d\n", chan->ch_id, cnt, page_count);
+		// uk_pr_debug("[%s] chan%u cnt: %d, page_count: %d\n", __func__, chan->ch_id, cnt, page_count);
 
 		reqsz = __offsetof(struct vmbus_chanmsg_gpadl_subconn,
 		    chm_gpa_page[cnt]);
@@ -699,7 +703,7 @@ vmbus_chan_gpadl_connect(struct vmbus_channel *chan, bus_addr_t paddr,
 		vmbus_msghc_exec_noresult(mh);
 	}
 	KASSERT(page_count == 0, ("invalid page count %d", page_count));
-	uk_pr_info("[vmbus_chan_gpadl_connect] chan%u page_count: %d\n", chan->ch_id, page_count);
+	// uk_pr_debug("[%s] chan%u page_count: %d\n", __func__, chan->ch_id, page_count);
 	
 	msg = vmbus_msghc_wait_result(sc, mh);
 	status = ((const struct vmbus_chanmsg_gpadl_connresp *)
@@ -719,6 +723,7 @@ vmbus_chan_gpadl_connect(struct vmbus_channel *chan, bus_addr_t paddr,
 		vmbus_chan_printf(chan, "gpadl_conn(chan%u) succeeded\n",
 		    chan->ch_id);
 	}
+	uk_pr_debug("[%s] end\n", __func__);
 	return 0;
 }
 
@@ -852,7 +857,7 @@ vmbus_chan_set_chmap(struct vmbus_channel *chan)
 static void
 vmbus_chan_poll_cancel_task(void *xchan)
 {
-	uk_pr_info("vmbus_chan_poll_cancel_task\n");
+	uk_pr_debug("[%s] enter\n", __func__);
 	vmbus_chan_poll_cancel_intq(xchan);
 }
 
@@ -1130,8 +1135,8 @@ vmbus_chan_send(struct vmbus_channel *chan, uint16_t type, uint16_t flags,
 	struct iovec iov[3];
 	boolean_t send_evt;
 
-	uk_pr_info("[vmbus_chan_send] chan: %p\n", chan);
-	uk_pr_info("[vmbus_chan_send] chan->ch_id: %d\n", chan->ch_id);
+	// uk_pr_info("[%s] chan: %p\n", __func__, chan);
+	// uk_pr_info("[%s] chan->ch_id: %d\n", __func__, chan->ch_id);
 
 	hlen = sizeof(pkt);
 	pktlen = hlen + dlen;
@@ -1179,7 +1184,7 @@ vmbus_chan_send_sglist(struct vmbus_channel *chan,
 	boolean_t send_evt;
 	uint64_t pad = 0;
 
-	uk_pr_info("[vmbus_chan_send_sglist] begin\n");
+	// uk_pr_info("[%s] begin\n", __func__);
 
 	hlen = __offsetof(struct vmbus_chanpkt_sglist, cp_gpa[sglen]);
 	pktlen = hlen + dlen;
@@ -1208,13 +1213,13 @@ vmbus_chan_send_sglist(struct vmbus_channel *chan,
 // 	if (!error && send_evt)
 // 		vmbus_chan_signal_tx(chan);
 	/* if caller is batching, just propagate the status */
-	uk_pr_info("[vmbus_chan_send_sglist] error: %d\n", error);
+	// uk_pr_info("[%s] error: %d\n", __func__, error);
 	if (need_sig)
 		*need_sig |= send_evt;
 	else if (error == 0 && send_evt)
 		vmbus_chan_signal_tx(chan);
 
-	uk_pr_info("[vmbus_chan_send_sglist] end error: %d\n", error);
+	// uk_pr_info("[%s] end error: %d\n", __func__, error);
 	
 	return error;
 }
@@ -2042,11 +2047,11 @@ vmbus_chan_msgproc_choffer(struct vmbus_softc *sc,
 
 	atomic_add_int(&sc->vmbus_scancount, 1);
 	//sc->vmbus_scancount++;
-	uk_pr_info("[vmbus_chan_msgproc_choffer] scancount increment: %u\n", sc->vmbus_scancount);
+	uk_pr_debug("[%s] vmbus_scancount increment: %u\n", __func__, sc->vmbus_scancount);
 
 	offer = (const struct vmbus_chanmsg_choffer *)msg->msg_data;
 
-	uk_pr_info("[vmbus_chan_msgproc_choffer] chid: %u start\n", offer->chm_chanid);
+	uk_pr_info("[%s] chid: %u start\n", __func__, offer->chm_chanid);
 
 	chan = vmbus_chan_alloc(sc);
 	if (chan == NULL) {
@@ -2084,7 +2089,8 @@ vmbus_chan_msgproc_choffer(struct vmbus_softc *sc,
 
 		chan->ch_montrig_mask =
 		    1 << (offer->chm_montrig % VMBUS_MONTRIG_LEN);
-		uk_pr_debug("[vmbus_chan_msgproc_choffer] ch_montrig: %d, ch_montrig_mask: %d\n",
+		uk_pr_debug("[%s] ch_montrig: %d, ch_montrig_mask: %d\n",
+			__func__,
 			chan->ch_montrig, 
 			chan->ch_montrig_mask);
 	}
@@ -2138,20 +2144,21 @@ vmbus_chan_msgproc_choffer(struct vmbus_softc *sc,
 		    chan->ch_id, error);
 		atomic_subtract_int(&chan->ch_refs, 1);
 		vmbus_chan_free(chan);
-		uk_pr_info("[vmbus_chan_msgproc] end vmbus_chan_add error: %d\n", error);
+		uk_pr_info("[%s] end vmbus_chan_add error: %d\n", __func__, error);
 		//return;
 		goto failed;
 	}
 	// taskqueue_enqueue(chan->ch_mgmt_tq, &chan->ch_attach_task);
 	VMBUS_PCPU_GET(sc, message_thread, curcpu) = uk_thread_create(thread_name, chan->ch_attach_task.ta_func, chan->ch_attach_task.ta_context);
 	if (PTRISERR(VMBUS_PCPU_GET(sc, message_thread, curcpu)))
-		uk_pr_info("[vmbus_chan_msgproc_choffer] error creating uk_thread: %d\n", PTR2ERR(VMBUS_PCPU_GET(sc, message_thread, curcpu)));
+		uk_pr_info("[%s] error creating uk_thread: %d\n", __func__, PTR2ERR(VMBUS_PCPU_GET(sc, message_thread, curcpu)));
 	
-	uk_pr_info("[vmbus_chan_msgproc_choffer] chid: %u end\n", offer->chm_chanid);
+	uk_pr_info("[%s] chid: %u end\n", __func__, offer->chm_chanid);
 	return;
 
 failed:
 	atomic_subtract_int(&sc->vmbus_scancount, 1);
+	uk_pr_debug("[%s] failed, vmbus_scancount decrement: %u\n", __func__, sc->vmbus_scancount);
 }
 
 static void
@@ -2409,7 +2416,7 @@ vmbus_chan_msgproc(struct vmbus_softc *sc, const struct vmbus_message *msg)
 	vmbus_chanmsg_proc_t msg_proc;
 	uint32_t msg_type;
 
-	uk_pr_info("[vmbus_chan_msgproc] start\n");
+	uk_pr_info("[%s] start\n", __func__);
 	msg_type = ((const struct vmbus_chanmsg_hdr *)msg->msg_data)->chm_type;
 	KASSERT(msg_type < VMBUS_CHANMSG_TYPE_MAX,
 	    ("invalid message type %u", msg_type));
@@ -2417,7 +2424,7 @@ vmbus_chan_msgproc(struct vmbus_softc *sc, const struct vmbus_message *msg)
 	msg_proc = vmbus_chan_msgprocs[msg_type];
 	if (msg_proc != NULL)
 		msg_proc(sc, msg);
-	uk_pr_info("[vmbus_chan_msgproc] end\n");
+	uk_pr_info("[%s] end\n", __func__);
 }
 
 // void

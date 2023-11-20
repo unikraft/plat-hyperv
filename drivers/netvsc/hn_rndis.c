@@ -53,22 +53,23 @@ hn_rndis_rid(struct hn_data *hv)
 static void *hn_rndis_alloc(size_t size)
 {
 	// return rte_zmalloc("RNDIS", size, rte_mem_page_size());
-	unsigned long num_pages;
-	num_pages = size_to_num_pages(size);
+	//unsigned long num_pages;
+	//num_pages = size_to_num_pages(size);
 	// TODO: Allocate the exact size, PAGE_SIZE aligned.
 	//uk_pr_info("[hn_rndis_alloc] size: %d, num_pages: %d\n", size, num_pages);
-	void *ptr =  uk_palloc(uk_alloc_get_default(), num_pages);
-	uk_pr_info("[hn_rndis_alloc] ptr: %p, size: %d, num_pages: %d\n", ptr, size, num_pages);
+	//void *ptr =  uk_palloc(uk_alloc_get_default(), num_pages);
+	void *ptr = uk_memalign(uk_alloc_get_default(), __PAGE_SIZE, size);
+	uk_pr_info("[%s] ptr: %p, size: %lu\n", __func__, ptr, size);
 	return ptr;
 }
 
 static void hn_rndis_free(void *ptr, size_t size)
 {
 	// return rte_zmalloc("RNDIS", size, rte_mem_page_size());
-	unsigned long num_pages;
-	num_pages = size_to_num_pages(size);
+	//unsigned long num_pages;
+	//num_pages = size_to_num_pages(size);
 	// TODO: Allocate the exact size, PAGE_SIZE aligned.
-	uk_pfree(uk_alloc_get_default(), ptr, num_pages);
+	uk_free(uk_alloc_get_default(), ptr);
 }
 
 #ifdef RTE_LIBRTE_NETVSC_DEBUG_DUMP
@@ -265,7 +266,7 @@ static int hn_nvs_send_rndis_ctrl(struct vmbus_channel *chan,
 				  const void *req, uint32_t reqlen)
 
 {
-	uk_pr_info("[hn_nvs_send_rndis_ctrl] begin\n");
+	uk_pr_info("[%s] begin\n", __func__);
 
 	struct hn_nvs_rndis nvs_rndis = {
 		.type = NVS_TYPE_RNDIS,
@@ -277,7 +278,7 @@ static int hn_nvs_send_rndis_ctrl(struct vmbus_channel *chan,
 	rte_iova_t addr;
 
 	addr = rte_malloc_virt2iova(req);
-	uk_pr_debug("[hn_nvs_send_rndis_ctrl] req: %p, addr: %p\n", req, addr);
+	uk_pr_info("[%s] req: %p, addr: %lu\n", __func__, req, addr);
 	if (unlikely(addr == RTE_BAD_IOVA)) {
 		uk_pr_err("RNDIS send request can not get iova\n");
 		return -EINVAL;
@@ -294,7 +295,7 @@ static int hn_nvs_send_rndis_ctrl(struct vmbus_channel *chan,
 	sg.ofs = addr & (rte_mem_page_size() - 1);
 	sg.len  = reqlen;
 
-	uk_pr_info("[hn_nvs_send_rndis_ctrl] req: %p, addr: %p, sg.ofs: %u, reqlen: %u, rte_mem_page_size: %u\n", req, addr, sg.ofs, reqlen, rte_mem_page_size());
+	uk_pr_info("[%s] req: %p, addr: %lu, sg.ofs: %u, reqlen: %u, rte_mem_page_size: %llu\n", __func__, req, addr, sg.ofs, reqlen, rte_mem_page_size());
 	if (sg.ofs + reqlen > rte_mem_page_size()) {
 		uk_pr_err("RNDIS request crosses page boundary");
 		return -EINVAL;
@@ -348,7 +349,7 @@ void hn_rndis_receive_response(struct hn_data *hv,
 {
 	const struct rndis_init_comp *hdr = data;
 
-	uk_pr_info("[hn_rndis_receive_response] begin hv: %p, len: %u\n", hv, len);
+	uk_pr_info("[%s] begin hv: %p, len: %u\n", __func__, hv, len);
 
 	hn_rndis_dump(data);
 
@@ -398,7 +399,7 @@ static int hn_rndis_exec1(struct hn_data *hv,
 	struct vmbus_channel *chan = hn_primary_chan(hv);
 	int error;
 
-	uk_pr_info("[hn_rndis_exec1] begin\n");
+	uk_pr_info("[%s] begin\n", __func__);
 
 	if (comp_len > sizeof(hv->rndis_resp)) {
 		uk_pr_warn(
@@ -425,7 +426,7 @@ static int hn_rndis_exec1(struct hn_data *hv,
 		return error;
 	}
 
-	uk_pr_info("[hn_rndis_exec1] after hn_nvs_send_rndis_ctrl\n");
+	uk_pr_info("[%s] after hn_nvs_send_rndis_ctrl\n", __func__);
 
 	if (comp) {
 		time_t start = time(NULL);
@@ -435,7 +436,7 @@ static int hn_rndis_exec1(struct hn_data *hv,
 			if (hv->closed)
 				return -ENETDOWN;
 
-			uk_pr_info("[hn_rndis_exec] time: %ld\n", time(NULL));
+			uk_pr_info("[%s] time: %ld\n", __func__, time(NULL));
 			if (time(NULL) - start > RNDIS_TIMEOUT_SEC) {
 				uk_pr_err(
 					    "RNDIS response timed out\n");
@@ -445,18 +446,19 @@ static int hn_rndis_exec1(struct hn_data *hv,
 			}
 
 			// if (rte_vmbus_chan_rx_empty(hv->primary->chan))
-			if (vmbus_chan_rx_empty(hv->primary->chan))
+			if (vmbus_chan_rx_empty(hv->primary->chan)) {
 				rte_delay_ms(RNDIS_DELAY_MS);
+			}
 
-			uk_pr_info("[hn_rndis_exec1] Before hn_process_events()\n");
+			uk_pr_info("[%s] before hn_process_events()\n", __func__);
 			hn_process_events(hv, 0, 1);
-			uk_pr_info("[hn_rndis_exec1] After hn_process_events()\n");
+			uk_pr_info("[%s] after hn_process_events()\n", __func__);
 		}
 
 		memcpy(comp, hv->rndis_resp, comp_len);
 	}
 
-	uk_pr_info("[hn_rndis_exec1] end\n");
+	uk_pr_info("[%s] end\n", __func__);
 
 	return 0;
 }
@@ -469,14 +471,14 @@ static int hn_rndis_execute(struct hn_data *hv, uint32_t rid,
 	const struct rndis_comp_hdr *hdr = comp;
 	int ret;
 
-	uk_pr_info("[hn_rndis_execute] begin rid: %u\n", rid);
+	uk_pr_info("[%s] begin rid: %u\n", __func__, rid);
 
 	memset(comp, 0, comp_len);
 
 	ret = hn_rndis_exec1(hv, req, reqlen, comp, comp_len);
 	if (ret < 0)
 		return ret;
-	uk_pr_info("[hn_rndis_execute] after hn_rndis_exec1\n");
+	uk_pr_info("[%s] after hn_rndis_exec1\n", __func__);
 	/*
 	 * Check this RNDIS complete message.
 	 */
@@ -494,11 +496,14 @@ static int hn_rndis_execute(struct hn_data *hv, uint32_t rid,
 		return -EINVAL;
 	}
 
-	uk_pr_info("[hn_rndis_execute] end\n");
+	uk_pr_info("[%s] end\n", __func__);
 
 	/* All pass! */
 	return 0;
 }
+
+uint8_t buf1[4096] __align(4096);
+uint8_t buf2[4096] __align(4096);
 
 static int
 hn_rndis_query(struct hn_data *hv, uint32_t oid,
@@ -512,18 +517,24 @@ hn_rndis_query(struct hn_data *hv, uint32_t oid,
 	unsigned int ofs;
 	uint32_t rid;
 
-	uk_pr_debug("[hn_rndis_query] enter\n");
 
+	uk_pr_debug("[%s] enter\n", __func__);
 	reqlen = sizeof(*req) + idlen;
-	req = hn_rndis_alloc(reqlen);
-	uk_pr_debug("[hn_rndis_query] req: %p\n", req);
+	void *dummyptr = hn_rndis_alloc(reqlen);
+	memset(dummyptr, 0, reqlen);
+	req = (struct rndis_query_req *)buf1;
+	uk_pr_debug("[%s] req: %p, reqlen: %d\n", __func__, req, reqlen);
 	if (req == NULL)
 		return -ENOMEM;
 
+
 	comp_len = sizeof(*comp) + odlen;
 	// comp = rte_zmalloc("QUERY", comp_len, rte_mem_page_size());
-	comp = hn_rndis_alloc(comp_len);
-	uk_pr_debug("[hn_rndis_query] comp: %p\n", comp);
+	// comp = hn_rndis_alloc(comp_len);
+	void *dummyptr2 = hn_rndis_alloc(comp_len);
+	memset(dummyptr2, 0, reqlen);
+	comp = (struct rndis_query_comp *)buf2;
+	uk_pr_debug("[%s] comp: %p, comp_len: %d\n", __func__, comp, comp_len);
 	if (!comp) {
 		error = -ENOMEM;
 		goto done;
@@ -584,12 +595,14 @@ hn_rndis_query(struct hn_data *hv, uint32_t oid,
 
 	error = 0;
 done:
-	uk_pr_info("[hn_rndis_query] before uk_free\n");
+	uk_pr_info("[%s] before uk_free\n", __func__);
 	// rte_free(comp);
-	hn_rndis_free(comp, comp_len);
+	// hn_rndis_free(comp, comp_len);
+	hn_rndis_free(dummyptr2, comp_len);
 	// rte_free(req);
-	hn_rndis_free(req, reqlen);
-	uk_pr_info("[hn_rndis_query] end error: %d\n", error);
+	// hn_rndis_free(req, reqlen);
+	hn_rndis_free(dummyptr, reqlen);
+	uk_pr_info("[%s] end error: %d\n", __func__, error);
 	return error;
 }
 
@@ -623,7 +636,7 @@ hn_rndis_query_hwcaps(struct hn_data *hv, struct ndis_offload *caps)
 	uint32_t caps_len, size;
 	int error;
 
-	uk_pr_debug("[hn_rndis_query_hwcaps] begin\n");
+	uk_pr_debug("[%s] begin\n", __func__);
 
 	memset(caps, 0, sizeof(*caps));
 	memset(&in, 0, sizeof(in));
@@ -632,17 +645,22 @@ hn_rndis_query_hwcaps(struct hn_data *hv, struct ndis_offload *caps)
 	if (hv->ndis_ver >= NDIS_VERSION_6_30) {
 		in.ndis_hdr.ndis_rev = NDIS_OFFLOAD_REV_3;
 		size = NDIS_OFFLOAD_SIZE;
+		uk_pr_debug("[%s] size: %d (NDIS_OFFLOAD_SIZE)\n", __func__, size);
 	} else if (hv->ndis_ver >= NDIS_VERSION_6_1) {
 		in.ndis_hdr.ndis_rev = NDIS_OFFLOAD_REV_2;
 		size = NDIS_OFFLOAD_SIZE_6_1;
+		uk_pr_debug("[%s] size: %d (NDIS_OFFLOAD_SIZE_6_1)\n", __func__, size);
 	} else {
 		in.ndis_hdr.ndis_rev = NDIS_OFFLOAD_REV_1;
 		size = NDIS_OFFLOAD_SIZE_6_0;
+		uk_pr_debug("[%s] size: %d (NDIS_OFFLOAD_SIZE_6_0)\n", __func__, size);
 	}
 	in.ndis_hdr.ndis_size = size;
 
 	caps_len = NDIS_OFFLOAD_SIZE;
-	error = hn_rndis_query(hv, OID_TCP_OFFLOAD_HARDWARE_CAPABILITIES+0x123,
+	// error = hn_rndis_query(hv, OID_TCP_OFFLOAD_HARDWARE_CAPABILITIES+0x123,
+	// 		       &in, size, caps, caps_len);
+	error = hn_rndis_query(hv, OID_TCP_OFFLOAD_HARDWARE_CAPABILITIES,
 			       &in, size, caps, caps_len);
 	if (error)
 		return error;
@@ -668,7 +686,7 @@ hn_rndis_query_hwcaps(struct hn_data *hv, struct ndis_offload *caps)
 		return -EINVAL;
 	}
 
-	uk_pr_debug("[hn_rndis_query_hwcaps] end\n");
+	uk_pr_debug("[%s] end\n", __func__);
 
 	return 0;
 }
@@ -789,7 +807,7 @@ hn_rndis_set(struct hn_data *hv, uint32_t oid, const void *data, uint32_t dlen)
 	uint32_t rid;
 	int error;
 
-	uk_pr_debug("[hn_rndis_set] hn_rndis_set begin\n");
+	uk_pr_debug("[%s] hn_rndis_set begin\n", __func__);
 
 	reqlen = sizeof(*req) + dlen;
 	// req = rte_zmalloc("RNDIS_SET", reqlen, rte_mem_page_size());
@@ -830,7 +848,7 @@ hn_rndis_set(struct hn_data *hv, uint32_t oid, const void *data, uint32_t dlen)
 done:
 	// rte_free(req);
 	uk_free(uk_alloc_get_default(), req);
-	uk_pr_debug("[hn_rndis_set] hn_rndis_set end error: %d\n", error);
+	uk_pr_debug("[%s] hn_rndis_set end error: %d\n", __func__, error);
 	return error;
 }
 
@@ -1102,15 +1120,15 @@ static int hn_rndis_init(struct hn_data *hv)
 	uint32_t comp_len, rid;
 	int error;
 
-	uk_pr_info("[hn_rndis_init] begin\n");
-	uk_pr_info("[hn_rndis_init] ch_id: %u, ch_rxbr: %p\n", hv->primary->chan->ch_id, hv->primary->chan->ch_rxbr);
+	uk_pr_info("[%s] begin\n", __func__);
+	uk_pr_info("[%s] ch_id: %u\n", __func__, hv->primary->chan->ch_id);
 
 	req = hn_rndis_alloc(sizeof(*req));
 	if (!req) {
 		uk_pr_err("no memory for RNDIS init");
 		return -ENXIO;
 	}
-	uk_pr_info("[hn_rndis_init] req: %p\n", req);
+	uk_pr_info("[%s] req: %p\n", __func__, req);
 
 	rid = hn_rndis_rid(hv);
 	req->type = RNDIS_INITIALIZE_MSG;
@@ -1158,7 +1176,7 @@ static int hn_rndis_init(struct hn_data *hv)
 		     hv->rndis_agg_align);
 	error = 0;
 
-	uk_pr_info("[hn_rndis_init] end error: %d\n", error);
+	uk_pr_info("[%s] end error: %d\n", __func__, error);
 done:
 	// rte_free(req);
 	uk_free(uk_alloc_get_default(), req);

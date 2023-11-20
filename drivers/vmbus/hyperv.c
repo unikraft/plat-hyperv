@@ -109,7 +109,7 @@ void *hyperv_mem_alloc(struct uk_alloc *a, size_t size)
 	num_pages = size_to_num_pages(size);
 	// TODO: Allocate the exact size, PAGE_SIZE aligned.
 	void *ptr = uk_palloc(a, num_pages);
-	uk_pr_debug("[hyperv_mem] ptr: %p\n", ptr);
+	// uk_pr_debug("[%s] ptr: %p\n", __func__, ptr);
 	return ptr;
 }
 u_int
