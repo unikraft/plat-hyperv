@@ -502,8 +502,11 @@ static int hn_rndis_execute(struct hn_data *hv, uint32_t rid,
 	return 0;
 }
 
+#define USE_DYNAMIC_ALLOC 0
+#if !USE_DYNAMIC_ALLOC
 uint8_t buf1[4096] __align(4096);
 uint8_t buf2[4096] __align(4096);
+#endif
 
 static int
 hn_rndis_query(struct hn_data *hv, uint32_t oid,
@@ -520,8 +523,12 @@ hn_rndis_query(struct hn_data *hv, uint32_t oid,
 
 	uk_pr_debug("[%s] enter\n", __func__);
 	reqlen = sizeof(*req) + idlen;
-	void *dummyptr = hn_rndis_alloc(reqlen);
-	memset(dummyptr, 0, reqlen);
+	// void *dummyptr = hn_rndis_alloc(reqlen);
+	// memset(dummyptr, 0, reqlen);
+#if USE_DYNAMIC_ALLOC
+	void *buf1 = hn_rndis_alloc(reqlen);
+	memset(buf1, 0, reqlen);
+#endif
 	req = (struct rndis_query_req *)buf1;
 	uk_pr_debug("[%s] req: %p, reqlen: %d\n", __func__, req, reqlen);
 	if (req == NULL)
@@ -531,8 +538,12 @@ hn_rndis_query(struct hn_data *hv, uint32_t oid,
 	comp_len = sizeof(*comp) + odlen;
 	// comp = rte_zmalloc("QUERY", comp_len, rte_mem_page_size());
 	// comp = hn_rndis_alloc(comp_len);
-	void *dummyptr2 = hn_rndis_alloc(comp_len);
-	memset(dummyptr2, 0, reqlen);
+	// void *dummyptr2 = hn_rndis_alloc(comp_len);
+	// memset(dummyptr2, 0, reqlen);
+#if USE_DYNAMIC_ALLOC
+	void *buf2 = hn_rndis_alloc(comp_len);
+	memset(buf2, 0, reqlen);
+#endif
 	comp = (struct rndis_query_comp *)buf2;
 	uk_pr_debug("[%s] comp: %p, comp_len: %d\n", __func__, comp, comp_len);
 	if (!comp) {
@@ -598,10 +609,16 @@ done:
 	uk_pr_info("[%s] before uk_free\n", __func__);
 	// rte_free(comp);
 	// hn_rndis_free(comp, comp_len);
-	hn_rndis_free(dummyptr2, comp_len);
+	// hn_rndis_free(dummyptr2, comp_len);
+#if USE_DYNAMIC_ALLOC
+	hn_rndis_free(buf1, comp_len);
+#endif
 	// rte_free(req);
 	// hn_rndis_free(req, reqlen);
-	hn_rndis_free(dummyptr, reqlen);
+	// hn_rndis_free(dummyptr, reqlen);
+#if USE_DYNAMIC_ALLOC
+	hn_rndis_free(buf2, reqlen);
+#endif
 	uk_pr_info("[%s] end error: %d\n", __func__, error);
 	return error;
 }
